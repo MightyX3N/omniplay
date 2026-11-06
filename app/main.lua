@@ -2,6 +2,7 @@
 -- Read-only: the only thing it ever sends is the status request (0x19).
 -- This is the first building block of OmniPlay; the full app grows out of it.
 local ffi = require("ffi")
+local bit = require("bit")
 local sperax = require("drivers.sperax")
 local explore = require("explore")
 
@@ -63,18 +64,32 @@ local function start_scan()
   else add_log("info", "scanning for Bluetooth devices...") end
 end
 
--- Refresh the list of nearby named devices; Sperax pads first, then by signal.
+-- Advertised service flags from the helper (see SV_* in omniplay_ble.c)
+local SVC_TAGS = { { 1, "FTMS" }, { 2, "footpod" }, { 4, "speed/cadence" }, { 8, "power" }, { 16, "heart rate" }, { 32, "FFF0" } }
+
+local function svc_tags(flags)
+  local t = {}
+  for _, p in ipairs(SVC_TAGS) do if bit.band(flags, p[1]) ~= 0 then t[#t + 1] = p[2] end end
+  return table.concat(t, ", ")
+end
+
+-- Refresh the list of nearby devices: fitness gear first (Sperax pads and anything
+-- advertising a fitness service), then by signal. Unnamed devices only if they
+-- advertise a fitness service.
 local function refresh_devices()
   ble.sb_scan_list(scan_buf, 8192)
   local list = {}
   for line in ffi.string(scan_buf):gmatch("[^\n]+") do
-    local name, addr, rssi, age = line:match("^([^\t]*)\t(%x+)\t(-?%d+)\t(%d+)")
-    if name and name ~= "" and tonumber(age) < 10000 then
-      list[#list + 1] = { name = name, addr = addr, rssi = tonumber(rssi), sperax = name:upper():find("SPERAX") ~= nil }
+    local name, addr, rssi, age, svc = line:match("^([^\t]*)\t(%x+)\t(-?%d+)\t(%d+)\t?(%d*)")
+    svc = tonumber(svc) or 0
+    if name and tonumber(age) < 10000 and (name ~= "" or bit.band(svc, 31) ~= 0) then
+      local sperax = name:upper():find("SPERAX") ~= nil
+      list[#list + 1] = { name = name ~= "" and name or "(no name)", addr = addr, rssi = tonumber(rssi),
+        sperax = sperax, fitness = sperax or bit.band(svc, 31) ~= 0, tags = svc_tags(svc) }
     end
   end
   table.sort(list, function(a, b)
-    if a.sperax ~= b.sperax then return a.sperax end
+    if a.fitness ~= b.fitness then return a.fitness end
     return a.rssi > b.rssi
   end)
   devices = {}
@@ -304,11 +319,11 @@ function love.draw()
       or explore_mode and "Explore mode: press a number to list everything that device exposes (E to go back)"
       or "Nearby Bluetooth devices (press the number to connect, E for explore mode). No pairing needed.", 28, y + 10, C.dim)
     if #devices == 0 and not connecting then
-      txt("Nothing yet. Turn the pad on and turn your phone's Bluetooth off.", 28, y + 34, C.dim)
+      txt("Nothing yet. Turn the device on (pedal a few strokes to wake a bike) and turn your phone's Bluetooth off.", 28, y + 34, C.dim)
     end
     for i, d in ipairs(devices) do
-      txt(string.format("%d.  %-24s %s   %d dBm", i, d.name, d.addr, d.rssi), 28, y + 12 + i * 22,
-        d.sperax and C.acc or C.text, fonts.mono)
+      txt(string.format("%d.  %-24s %s   %4d dBm   %s", i, d.name, d.addr, d.rssi, d.tags), 28, y + 12 + i * 22,
+        d.fitness and C.acc or C.text, fonts.mono)
     end
     y = y + 52 + math.max(1, #devices) * 22
   else

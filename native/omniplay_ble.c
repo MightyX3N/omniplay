@@ -65,7 +65,8 @@ enum {
     OP_GETRESULTS = 8,                                  /* IAsyncOperation<T> */
     VV_GETAT = 6, VV_SIZE = 7,                          /* IVectorView<T> */
     W_PUT_SCANMODE = 12, W_START = 17, W_STOP = 18, W_ADD_RECEIVED = 19, W_REMOVE_RECEIVED = 20,
-    RA_RSSI = 6, RA_ADDRESS = 7, RA_ADVERTISEMENT = 10, AD_LOCALNAME = 8,
+    RA_RSSI = 6, RA_ADDRESS = 7, RA_ADVERTISEMENT = 10, AD_LOCALNAME = 8, AD_SERVICEUUIDS = 10,
+    VEC_GETAT = 6, VEC_SIZE = 7,                        /* IVector<T> */
     DS_FROMADDRESS = 7,                                 /* IBluetoothLEDeviceStatics */
     D3_SERVICES_FOR_UUID_MODE = 11,                     /* IBluetoothLEDevice3 */
     SR_STATUS = 6, SR_SERVICES = 8,                     /* IGattDeviceServicesResult */
@@ -82,7 +83,10 @@ enum {
 #define PKTMAX 512
 #define MAXDEV 48
 
-typedef struct { UINT64 addr; INT16 rssi; char name[64]; DWORD seen; } Dev;
+typedef struct { UINT64 addr; INT16 rssi; char name[64]; DWORD seen; unsigned svc; } Dev;
+
+/* Advertised service flags reported by sb_scan_list */
+enum { SV_FTMS = 1, SV_RSC = 2, SV_CSC = 4, SV_POWER = 8, SV_HR = 16, SV_FFF0 = 32 };
 
 static CRITICAL_SECTION g_lock;
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
@@ -179,13 +183,28 @@ static void utf8(HSTRING h, char *out, int n)
 static HRESULT WINAPI on_received(void *self, void *sender, void *args)
 {
     (void)self; (void)sender;
-    UINT64 addr = 0; INT16 rssi = 0; char name[64] = "";
+    UINT64 addr = 0; INT16 rssi = 0; char name[64] = ""; unsigned svc = 0;
     FN(args, RA_ADDRESS, HRESULT (WINAPI *)(void *, UINT64 *))(args, &addr);
     FN(args, RA_RSSI, HRESULT (WINAPI *)(void *, INT16 *))(args, &rssi);
     void *adv = NULL;
     if (SUCCEEDED(FN(args, RA_ADVERTISEMENT, GETPTR_T)(args, &adv)) && adv) {
         HSTRING h = NULL;
         if (SUCCEEDED(FN(adv, AD_LOCALNAME, HRESULT (WINAPI *)(void *, HSTRING *))(adv, &h)) && h) { utf8(h, name, sizeof name); WindowsDeleteString(h); }
+        void *uuids = NULL; UINT32 nu = 0;
+        if (SUCCEEDED(FN(adv, AD_SERVICEUUIDS, GETPTR_T)(adv, &uuids)) && uuids) {
+            FN(uuids, VEC_SIZE, GETU32_T)(uuids, &nu);
+            for (UINT32 k = 0; k < nu && k < 16; k++) {
+                GUID g;
+                if (FAILED(FN(uuids, VEC_GETAT, HRESULT (WINAPI *)(void *, UINT32, GUID *))(uuids, k, &g))) continue;
+                if (memcmp(&g.Data2, &BASE_GUID.Data2, sizeof(GUID) - 4) != 0) continue;
+                switch (g.Data1) {
+                    case 0x1826: svc |= SV_FTMS; break; case 0x1814: svc |= SV_RSC; break;
+                    case 0x1816: svc |= SV_CSC; break; case 0x1818: svc |= SV_POWER; break;
+                    case 0x180D: svc |= SV_HR; break; case 0xFFF0: svc |= SV_FFF0; break;
+                }
+            }
+            rel(uuids);
+        }
         rel(adv);
     }
     EnterCriticalSection(&g_lock);
@@ -195,6 +214,7 @@ static HRESULT WINAPI on_received(void *self, void *sender, void *args)
     if (i < g_ndev) {
         g_devs[i].rssi = rssi; g_devs[i].seen = GetTickCount();
         if (name[0]) snprintf(g_devs[i].name, sizeof g_devs[i].name, "%s", name);
+        g_devs[i].svc |= svc;
     }
     LeaveCriticalSection(&g_lock);
     return S_OK;
@@ -260,7 +280,7 @@ API void sb_scan_stop(void)
     rel(g_watcher); g_watcher = NULL;
 }
 
-/* Lines: "name\tAABBCCDDEEFF\trssi\tage_ms\n" for every device seen. Returns count. */
+/* Lines: "name\tAABBCCDDEEFF\trssi\tage_ms\tsvcflags\n" for every device seen. Returns count. */
 API int sb_scan_list(char *out, int outlen)
 {
     init();
@@ -270,8 +290,8 @@ API int sb_scan_list(char *out, int outlen)
     n = g_ndev;
     DWORD now = GetTickCount();
     for (int i = 0; i < g_ndev && used < outlen; i++)
-        used += snprintf(out + used, outlen - used, "%s\t%012llX\t%d\t%lu\n", g_devs[i].name,
-                         (unsigned long long)g_devs[i].addr, g_devs[i].rssi, (unsigned long)(now - g_devs[i].seen));
+        used += snprintf(out + used, outlen - used, "%s\t%012llX\t%d\t%lu\t%u\n", g_devs[i].name,
+                         (unsigned long long)g_devs[i].addr, g_devs[i].rssi, (unsigned long)(now - g_devs[i].seen), g_devs[i].svc);
     LeaveCriticalSection(&g_lock);
     return n;
 }

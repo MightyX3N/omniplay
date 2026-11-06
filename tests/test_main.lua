@@ -30,7 +30,7 @@ local fake = {
   sb_scan_start = function() return 0 end,
   sb_scan_stop = noop,
   sb_scan_list = function(buf, n)
-    local s = "Phone\t112233445566\t-80\t100\nSPERAX_RM01\tAABBCCDDEEFF\t-55\t50\n\tDEADBEEF0000\t-90\t10\n"
+    local s = "Phone\t112233445566\t-80\t100\t0\nSPERAX_RM01\tAABBCCDDEEFF\t-55\t50\t32\n\tDEADBEEF0000\t-90\t10\t1\n\tCAFE00000000\t-40\t10\t0\n"
     ffi.copy(buf, s)
     return 3
   end,
@@ -85,7 +85,7 @@ for _ = 1, 3 do love.update(0.2); love.draw() end
 -- explorer flow
 love.keypressed("e"); love.keypressed("2")
 for _ = 1, 3 do love.update(0.6); love.draw() end
-assert(EXPLORED == "AABBCCDDEEFF" or EXPLORED == "112233445566", tostring(EXPLORED))
+assert(EXPLORED == "DEADBEEF0000", "device 2 should be the unnamed FTMS device, got " .. tostring(EXPLORED))
 love.keypressed("c")
 print(CLIP:sub(1, 1200))
 assert(CLIP:find("resistance can be set"), "summary wrong")
