@@ -123,4 +123,19 @@ assert(sent[4] == "11 00 00 00 00 28 33" and #sent == 4, "auto test should start
 assert(CLIP:find("pedalling detected, test started") and CLIP:find("set simulation: success") and CLIP:find("simulation changed"), "bike test log wrong")
 love.keypressed("d")
 assert(sent[#sent] == "08 01", "stop not sent on disconnect")
+-- T from the device list: connects to the Sperax pad, arms, second T starts the belt
+fake.sb_write = orig_write
+for _ = 1, 3 do love.update(0.6) end
+local wrote = {}
+fake.sb_write = function(d, n) local t = {} for i = 0, n - 1 do t[#t + 1] = string.format("%02X", d[i]) end wrote[#wrote + 1] = table.concat(t, " "); return orig_write(d, n) end
+love.keypressed("t")
+for _ = 1, 3 do love.update(0.1) end
+local pt = require("padtest")
+assert(pt.armed, "T should connect and arm the pad test")
+love.keypressed("t")
+local found = false
+for _, w in ipairs(wrote) do if w:find("^F5 0A 00 15 01 02 00") then found = true end end
+assert(found, "second T should send the start-belt frame: " .. table.concat(wrote, " | "))
+love.keypressed("space")
+assert(wrote[#wrote]:find("^F5 0A 00 15 00 00 00"), "space should stop the belt: " .. wrote[#wrote])
 print("main smoke test passed")

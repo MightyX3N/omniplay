@@ -111,11 +111,13 @@ local function connect(i)
   connecting, conn_name = true, d.name
 end
 
+local arm_after_connect = false
 local function on_connected()
   connecting, connected = false, true
   reader, status, last_frame, write_fails = sperax.new_reader(), nil, nil, 0
   step_hist = {}
   add_log("info", "connected, subscribed to FFF1, polling every " .. POLL_EVERY .. " s")
+  if arm_after_connect then arm_after_connect = false; padtest.arm(ble, add_log) end
 end
 
 local function disconnect(why)
@@ -274,8 +276,21 @@ function love.keypressed(k)
     return
   end
   if k == "d" then disconnect()
-  elseif k == "t" and connected then
-    if padtest.armed then padtest.start() elseif not padtest.active then padtest.arm(ble, add_log) end
+  elseif k == "t" then
+    if connected then
+      if padtest.armed then padtest.start() elseif not padtest.active then padtest.arm(ble, add_log) end
+    elseif not connecting and not exploring then
+      -- not connected yet: connect to the first Sperax pad in the list, then arm the test
+      local idx
+      for i2, d in ipairs(devices) do if d.sperax then idx = i2 break end end
+      if idx then
+        list_mode, arm_after_connect = "connect", true
+        add_log("info", "T: connecting to " .. devices[idx].name .. " first")
+        connect(idx)
+      else
+        add_log("err", "T: no Sperax pad in the list. Turn the pad on and turn your phone's Bluetooth off.")
+      end
+    end
   elseif k == "p" then paused = not paused; add_log("info", paused and "polling paused" or "polling resumed")
   elseif k == "c" then copy_log()
   elseif (k == "e" or k == "b") and not connected and not connecting and not exploring then
