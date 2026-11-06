@@ -85,6 +85,21 @@ h:send("GET /state HTTP/1.1\r\nHost: x\r\n\r\n")
 r = recv_all(h)
 assert(r:find("200 OK") and r:find('"speed_kmh":25.6'), "http /state: " .. r)
 
+-- camera page: served by OmniPlay, its own origin may open a WebSocket, readings arrive
+local hc = assert(socket.connect("127.0.0.1", 21891)); hc:settimeout(0)
+hc:send("GET /camera HTTP/1.1\r\nHost: x\r\n\r\n")
+r = recv_all(hc)
+assert(r:find("200 OK") and r:find("text/html") and r:find("OmniPlay camera"), "camera page should be served")
+local cw = connect("http://127.0.0.1:21891")
+r = recv_all(cw)
+assert(r:find("101 Switching Protocols"), "the camera page's own origin should be allowed")
+cw:send(masked('{"camera":{"moving":true,"cadence":84,"fps":30,"activity":"cycling"}}'))
+tick(0.3)
+local cam = api.camera_live()
+assert(cam and cam.moving and cam.cadence == 84, "camera reading should arrive")
+assert(api.game_name() == "PhysPlay", "the camera page must not count as a game")
+cw:close()
+
 -- game leaves: grade ramps back to flat, keys come back
 c:close()
 tick(3)

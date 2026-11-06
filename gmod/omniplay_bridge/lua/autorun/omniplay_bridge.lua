@@ -14,7 +14,7 @@
 --   OmniPlay.SetInfo(text)          -> a status line written to OmniPlay's log (for debugging)
 --   hook "OmniPlay_Data" (data)     -> new data arrived (about 10 times a second)
 -- SERVER
---   ply:OmniPlayData()              -> that player's last data (sent by their client up to 10x a second; trust it like any client input)
+--   ply:OmniPlayData()              -> that player's last data (camera = true when OmniPlay's camera sees the feet) (sent by their client up to 10x a second; trust it like any client input)
 --   ply:OmniPlaySetGrade(pct)       -> set that player's hill
 --   ply:OmniPlayTakeInput(bool)
 --   hook "OmniPlay_PlayerData" (ply, data)
@@ -52,7 +52,7 @@ if SERVER then
     local d = {
       speed_kmh = math.Clamp(net.ReadFloat(), 0, 120), cadence = math.Clamp(net.ReadFloat(), 0, 300),
       power = net.ReadUInt(12), hr = net.ReadUInt(8), moving = net.ReadBool(), gait = net.ReadString():sub(1, 8),
-      grade = net.ReadFloat(), kind = net.ReadString():sub(1, 10),
+      grade = net.ReadFloat(), kind = net.ReadString():sub(1, 10), camera = net.ReadBool(),
     }
     if d.power == 0 then d.power = nil end
     if d.hr == 0 then d.hr = nil end
@@ -139,6 +139,7 @@ timer.Create("OmniPlay_Send", 0.02, 0, function()
     net.WriteUInt(math.Clamp(math.floor(d.hr or 0), 0, 255), 8)
     net.WriteBool(d.moving == true); net.WriteString(d.gait or "stopped")
     net.WriteFloat(d.grade or 0); net.WriteString(d.device and d.device.kind or "")
+    net.WriteBool(d.camera == true)
   end
   net.SendToServer()
 end)

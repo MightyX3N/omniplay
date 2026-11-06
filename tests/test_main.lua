@@ -134,6 +134,15 @@ assert(h.sport == "cycling" and h.elapsed > 100, "bad summary")
 local f = io.open("/tmp/omni-main/activities/OmniPlay-" .. h.id .. "-cycling.fit", "rb")
 assert(f, "FIT file should exist"); f:close()
 run(1) -- draw history with the saved session
+-- camera only: no Bluetooth device, the camera page drives speed (cycling 90 rpm ~ 29 km/h)
+devices.disconnect()
+local api2 = require("api")
+for _ = 1, 40 do api2.camera = { moving = true, cadence = 90, fps = 30, activity = "cycling", t = api2.now() } run(0.05) end
+local st = require("json").decode(api2.last_state)
+assert(st.camera and st.device.name == "Camera" and math.abs(st.speed_kmh - 28.8) < 0.5 and st.moving, "camera-only state")
+for _ = 1, 10 do api2.camera = { moving = false, cadence = 0, fps = 30, activity = "cycling", t = api2.now() } run(0.05) end
+st = require("json").decode(api2.last_state)
+assert(st.speed_kmh == 0 and not st.moving, "camera says still -> stopped at once")
 love.keypressed("f8")
 local output = require("output")
 assert(output.enabled, "F8 should enable output")

@@ -83,11 +83,13 @@ local function sim(dt)
       -- pedal the numbers change every ~2 s, so numbers that haven't changed for longer mean stopped.
       local frozen = rd.reading_t and CurTime() - rd.reading_t > FROZEN_S
       local coasting = (data.cadence or 0) < 5 or (data.power or 0) < 5 or falling or frozen
+      -- OmniPlay's camera sees your feet directly: trust it over the bike's slow console
+      if data.camera then coasting = not data.moving end
       rd.coasting = coasting
       if coasting then
         local kg = math.Clamp(ply:GetInfoNum("physplay_weight", 75), 30, 200)
         rd.v = PP.Step(rd.v, 0, grade, kg, 1, dt)
-        if grade > -2 then rd.v = math.max(0, rd.v - COAST_BRAKE * dt) end
+        if grade > -2 then rd.v = math.max(0, rd.v - COAST_BRAKE * (data.camera and 1.7 or 1) * dt) end
       else
         rd.v = rd.v + (data.speed_kmh / 3.6 - rd.v) * math.min(1, dt / BIKE_FOLLOW_S)
       end

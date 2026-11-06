@@ -32,6 +32,8 @@ For GMod, use the `omniplay_bridge` addon (`gmod/omniplay_bridge`) instead of to
 - `gait`: `stopped`, `walk`, `run` or `sprint`, from the user's active game profile.
 - `power`, `hr`, `steps` are missing when the device doesn't report them.
 - `grade`: the hill currently applied to the machine.
+- `camera`: true when OmniPlay's camera page is watching the user's feet. Then `moving` and `cadence`
+  come from the camera (instant), and `device_cadence` is what the device itself reports.
 - When OmniPlay closes, `live.txt` gets `{"closed":true}`.
 
 ## Requests (game → OmniPlay)

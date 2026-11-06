@@ -20,6 +20,7 @@ local ex = { running = false, lines = nil, raw = "", name = nil, t = 0 }
 local exbuf = ffi.new("char[65536]")
 local sel_profile, sel_hist, capture = 1, 1, nil
 local hist_cache = {}
+local live_m, live_dev
 local build = "dev"
 
 local log_file
@@ -127,14 +128,34 @@ end
 function love.update(dt)
   if not ble then return end
   devices.update(dt)
-  local d = devices.dev
+  -- combine the camera with the device: with a bike or pad, the camera says instantly whether
+  -- you're moving (and your cadence); on its own it is the device
+  local d, m = devices.dev, devices.m
+  local cam = api.camera_live()
+  local extra_cam, dev_cad
+  if cam then
+    local real = devices.state == "connected" and d
+    dev_cad = real and m.cadence or nil
+    local mm = {}
+    if real then for k, v in pairs(m) do mm[k] = v end end
+    mm.moving = cam.moving
+    if cam.moving and cam.cadence > 0 then mm.cadence = cam.cadence elseif not cam.moving then mm.cadence = 0 end
+    if not real then
+      local c = cam.moving and cam.cadence or 0
+      mm.speed_kmh = cam.activity == "cycling" and c * 0.32 or (cam.activity == "walking" and c * 0.045 or c * 0.066)
+      d = { name = "Camera", kind = cam.activity == "cycling" and "ftms_bike" or "ftms_treadmill", allow_hills = false }
+    end
+    m, extra_cam = mm, true
+  end
+  live_m, live_dev = m, d
   session.game = api.game_name() or (output.profile and output.profile.name)
-  session.update(dt, devices.m, d)
+  session.update(dt, m, d)
   output.suppressed = api.take_input()
-  output.update(dt, devices.m, d and d.kind)
+  output.update(dt, m, d and d.kind)
   local s = session.cur
-  api.update(dt, devices.m, d, devices.state, devices,
-    { gait = output.gait, recording = session.state, distance_m = s and math.floor(s.distance), elapsed_s = s and math.floor(s.elapsed) })
+  api.update(dt, m, d, (cam and not (devices.state == "connected")) and "connected" or devices.state, devices,
+    { gait = output.gait, recording = session.state, distance_m = s and math.floor(s.distance), elapsed_s = s and math.floor(s.elapsed),
+      camera = extra_cam, device_cadence = dev_cad })
   if ex.running then
     ex.t = ex.t + dt
     local st = ble.sb_explore_state()
@@ -186,7 +207,14 @@ local function fmt_time(s) s = math.floor(s or 0); return string.format("%d:%02d
 local function device_line(x, y, w)
   local d = devices.dev
   ui.rect(x, y, w, 46, C.panel)
+  local cam = api.camera_live()
+  if cam then
+    local t = string.format("Camera: %s, %d %s, %d fps", cam.moving and "moving" or "still", cam.cadence,
+      cam.activity == "cycling" and "rpm" or "steps/min", cam.fps)
+    ui.text(t, x + w - 470, y + 25, C.accent, "small", 350, "right")
+  end
   if not d then
+    if cam then ui.text("Camera only  ·  " .. cam.activity, x + 14, y + 14, C.text) return end
     ui.text("No device connected. Add one on the Devices tab.", x + 14, y + 14, C.muted)
     return
   end
@@ -204,7 +232,8 @@ local function device_line(x, y, w)
 end
 
 local function draw_session(x, y, w, h)
-  local m, kind = devices.m, devices.dev and devices.dev.kind
+  local m = live_m or devices.m
+  local kind = (live_dev or devices.dev) and (live_dev or devices.dev).kind
   -- recording line
   local rec = session.state
   local col = rec == "recording" and C.bad or (rec == "paused" and C.warn or C.muted)
@@ -268,6 +297,17 @@ local function draw_session(x, y, w, h)
 end
 
 local function draw_devices(x, y, w, h)
+  -- camera: a page in your browser watches your feet; works alone or with a device
+  ui.rect(x, y, w, 52, C.panel)
+  local cam = api.camera_live()
+  ui.text("Camera", x + 14, y + 7, C.text, "mid")
+  ui.text(cam and string.format("connected  ·  %s, %d %s  ·  %d fps", cam.moving and "moving" or "still", cam.cadence,
+    cam.activity == "cycling" and "rpm" or "steps/min", cam.fps) or "Use a webcam (or a phone as webcam) pointed at your feet",
+    x + 14, y + 30, cam and C.accent or C.muted, "small")
+  if ui.button(cam and "Open again" or "Open camera page", x + w - 190, y + 9, 176, 34, cam and "secondary" or "primary") then
+    love.system.openURL("http://127.0.0.1:" .. api.port .. "/camera")
+  end
+  y = y + 64
   ui.text("Your devices", x, y, C.muted, "small")
   y = y + 20
   if #saved.devices == 0 then ui.text("None yet. Add one from the list below.", x, y + 4, C.soft); y = y + 34 end

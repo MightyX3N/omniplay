@@ -116,6 +116,14 @@ end
 local function apply(g, msg)
   if type(msg) ~= "table" then return end
   g.seen = M.now()
+  -- the camera page (served by OmniPlay itself) sends its rhythm here
+  if type(msg.camera) == "table" then
+    local cm = msg.camera
+    if not M.camera or M.now() - M.camera.t > 3 then M.log("info", "camera connected") end
+    M.camera = { moving = cm.moving == true, cadence = tonumber(cm.cadence) or 0, fps = tonumber(cm.fps) or 0,
+      activity = (cm.activity == "walking" or cm.activity == "running") and cm.activity or "cycling", t = M.now() }
+    return
+  end
   local name = msg.game or msg.name
   if type(name) == "string" and name ~= "" and name ~= g.name then
     g.name = name:sub(1, 60)
@@ -157,6 +165,11 @@ function M.active()
   end
   return best
 end
+-- the camera's latest reading, or nil when its page isn't sending
+function M.camera_live()
+  if M.camera and M.now() - M.camera.t < 1.5 then return M.camera end
+end
+
 function M.take_input() for _, g in pairs(M.games) do if g.take_input then return true end end return false end
 function M.game_name() local g = M.active(); return g and g.name end
 
@@ -196,7 +209,10 @@ local function handle_http(c)
   for k, v in head:gmatch("\r\n([^:\r\n]+):%s*([^\r\n]*)") do h[k:lower()] = v end
   -- web pages: never let websites talk to your machine. Garry's Mod's own menu browser
   -- (asset://garrysmod) is the only page origin allowed.
-  if h.origin and not h.origin:lower():match("^asset://garrysmod") then
+  local own = "http://127.0.0.1:" .. M.port
+  local own2 = "http://localhost:" .. M.port
+  local o = h.origin and h.origin:lower()
+  if o and not (o:match("^asset://garrysmod") or o == own or o == own2) then
     M.log("err", "refused a connection from a web page (" .. h.origin:sub(1, 80) .. ")")
     csend(c, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     c.close_after = true
@@ -212,10 +228,13 @@ local function handle_http(c)
     if M.last_state then csend(c, ws_frame(1, M.last_state)) end
     return
   end
-  local body, code = nil, "404 Not Found"
+  local body, code, ctype = nil, "404 Not Found", "application/json"
   if method == "GET" and path == "/state" then body, code = M.last_state or "{}", "200 OK" end
+  if method == "GET" and (path == "/camera" or path == "/camera/") and M.camera_page then
+    body, code, ctype = M.camera_page, "200 OK", "text/html; charset=utf-8"
+  end
   body = body or ""
-  csend(c, "HTTP/1.1 " .. code .. "\r\nContent-Type: application/json\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n" .. body)
+  csend(c, "HTTP/1.1 " .. code .. "\r\nContent-Type: " .. ctype .. "\r\nCache-Control: no-store\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n" .. body)
   c.close_after = true
 end
 
@@ -324,6 +343,8 @@ function M.init(log_fn, opts)
   M.log = log_fn or M.log
   M.port = opts.port or M.port
   M.gmod_dir = opts.gmod_dir or M.find_gmod()
+  local okp, page = pcall(function() return love.filesystem.read("camera.html") end)
+  M.camera_page = okp and page or read_file("app/camera.html")
   if M.gmod_dir then M.log("info", "Garry's Mod bridge: " .. M.gmod_dir .. (IS_WIN and "\\omniplay" or "/omniplay")) end
   local ok, s = pcall(require, "socket")
   if not ok then M.status = "no socket library"; return end
@@ -407,6 +428,7 @@ function M.update(dt, m, dev, devstate, ctl, extra)
     speed_kmh = m.speed_kmh or 0, cadence = m.cadence or 0, power = m.power, hr = (m.hr and m.hr > 0) and m.hr or nil,
     steps = m.steps, moving = m.moving == true, gait = GAITS[extra.gait] or "stopped",
     grade = m.grade, recording = extra.recording, distance_m = extra.distance_m, elapsed_s = extra.elapsed_s,
+    camera = extra.camera, device_cadence = extra.device_cadence,
   }
   M.last_state = json.encode(st)
   local frame = ws_frame(1, M.last_state)

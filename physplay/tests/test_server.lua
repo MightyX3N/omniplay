@@ -40,6 +40,12 @@ local v_riding = rb.v * 3.6
 for _ = 1, 80 do now = now + 0.05 STUB.advance(0.05) STUB.hooks.Think.PhysPlaySim() end
 print(string.format("frozen reading: %.1f km/h while fresh, %.1f km/h after 6 s frozen", v_riding, rb.v * 3.6))
 assert(v_riding > 20 and rb.v * 3.6 < 5, "frozen numbers should count as stopped")
+-- with OmniPlay's camera: still feet stop the rider at once, even though the bike's numbers look fine
+bike.OmniPlayData = function() return { kind = "bike", power = 120, cadence = 80, speed_kmh = 28, camera = true, moving = false } end
+rb.v = 28 / 3.6
+for _ = 1, 20 do now = now + 0.05 STUB.advance(0.05) STUB.hooks.Think.PhysPlaySim() end
+print(string.format("camera says still: %.1f km/h after 1 s (bike console still says 28)", rb.v * 3.6))
+assert(rb.v * 3.6 < 18, "camera stop should win")
 -- lane change
 bike.keys[IN_MOVERIGHT] = true
 local l0 = rb.lane
