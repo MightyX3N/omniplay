@@ -1,0 +1,1 @@
+return {id="valley",name="Valley Island",x0=-6200,y0=-4760,cell=40,columns=301,rows=246,scale=0.1,heights=4,roads=1,cafes={{name="Valley Café",x=0,y=0,z=36.3},{name="Forge Hut",x=300,y=2890,z=336.1},{name="Hilltop Café",x=2400,y=950,z=152.1},{name="Beach Café",x=700,y=-3220,z=5.5}}}
