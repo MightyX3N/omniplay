@@ -41,7 +41,7 @@ local function now() return love.timer.getTime() end
 
 local function add_log(kind, text)
   log[#log + 1] = { t = now(), kind = kind, text = text }
-  if #log > 300 then table.remove(log, 1) end
+  if #log > 1000 then table.remove(log, 1) end
 end
 
 local function load_dll()
@@ -203,7 +203,7 @@ local function copy_log()
   local out = { "OmniPlay probe log", "device: " .. tostring(conn_name), "polls: " .. polls ..
     "  frames ok: " .. frames_ok .. "  bad: " .. frames_bad .. "  dropped: " .. (ble and ble.sb_dropped() or 0), "" }
   if biketest.active then for _, l in ipairs(biketest.summary()) do out[#out + 1] = l end; out[#out + 1] = "" end
-  local from = math.max(1, #log - 80)
+  local from = math.max(1, #log - (biketest.active and 400 or 80))
   for i = from, #log do
     local e = log[i]
     out[#out + 1] = string.format("%8.2f %-5s %s", e.t, e.kind, e.text)
@@ -225,7 +225,7 @@ end
 function love.update(dt)
   if not ble then return end
   if biketest.active then
-    biketest.update()
+    biketest.update(dt)
     if not biketest.active then start_scan() end
     return
   end

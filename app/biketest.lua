@@ -9,6 +9,7 @@ local name, connecting, connected = nil, false, false
 local data, last_reply, status_text = nil, "none yet", "none yet"
 local grade, level, enc_i = 0, 10, 1
 local history = {}
+local log_t, peak = 0, { speed_kmh = 0, cadence = 0, power = 0 }
 local rx = ffi.new("unsigned char[512]")
 local which = ffi.new("int[1]")
 
@@ -27,6 +28,7 @@ end
 function M.start(lib, log_fn, dev)
   ble, add_log, M.active = lib, log_fn, true
   name, connecting, connected, data = dev.name, true, false, nil
+  log_t, peak = 0, { speed_kmh = 0, cadence = 0, power = 0 }
   last_reply, status_text, grade, level = "none yet", "none yet", 0, 10
   ble.sb_scan_stop()
   -- notify list order matters: 0 = indoor bike data, 1 = control point, 2 = machine status
@@ -53,7 +55,7 @@ local function on_connected()
   send(ftms.simulation(grade), string.format("hill %+d%%", grade))
 end
 
-function M.update()
+function M.update(dt)
   if connecting then
     local st = ble.sb_state()
     if st == 2 then on_connected()
@@ -64,13 +66,22 @@ function M.update()
     return
   end
   if not connected then return end
+  log_t = log_t + (dt or 0)
+  if log_t >= 1 and data then
+    log_t = 0
+    add_log("frame", string.format("bike: %s   [sent hill %+d%%, resistance %d]", ftms.bike_text(data), grade, level))
+  end
   while true do
     local n = ble.sb_read_ex(rx, 512, which)
     if n <= 0 then break end
     local b = {}
     for i = 0, n - 1 do b[#b + 1] = rx[i] end
     if which[0] == 0 then
-      data = ftms.indoor_bike(b)
+      -- merge: some bikes split the data over several packets, so keep the last value of each field
+      local d = ftms.indoor_bike(b)
+      data = data or {}
+      for k2, v in pairs(d) do data[k2] = v end
+      for k2 in pairs(peak) do if d[k2] and d[k2] > peak[k2] then peak[k2] = d[k2] end end
       history[#history + 1] = data
       if #history > 600 then table.remove(history, 1) end
     elseif which[0] == 1 then
@@ -108,6 +119,7 @@ function M.summary()
     "sent hill: " .. string.format("%+d%%", grade) .. "   sent resistance: " .. level .. " (" .. ftms.RESISTANCE_ENCODINGS[enc_i] .. ")",
     "last reply: " .. last_reply .. "   last status: " .. status_text,
     "bike reports: " .. (data and ftms.bike_text(data) or "no data yet"),
+    string.format("peaks this test: speed %.1f km/h, cadence %.0f rpm, power %d W", peak.speed_kmh, peak.cadence, peak.power),
   }
 end
 
