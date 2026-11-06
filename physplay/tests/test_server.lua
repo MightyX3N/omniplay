@@ -33,6 +33,13 @@ bike.OmniPlayData = function() return { kind = "bike", power = 0, cadence = 0, s
 for _ = 1, 40 do now = now + 0.05 STUB.hooks.Think.PhysPlaySim() end
 print(string.format("2 s after power drops to 0 (flywheel still 27 km/h): %.1f km/h", rb.v * 3.6))
 assert(rb.v * 3.6 < 8, "should stop without waiting for the flywheel")
+-- the real EM 8000: numbers freeze at the last value when you stop, then drop to 0 seconds later
+bike.OmniPlayData = function() return { kind = "bike", power = 28, cadence = 68, speed_kmh = 25.4 } end
+for _ = 1, 40 do now = now + 0.05 STUB.advance(0.05) STUB.hooks.Think.PhysPlaySim() end
+local v_riding = rb.v * 3.6
+for _ = 1, 80 do now = now + 0.05 STUB.advance(0.05) STUB.hooks.Think.PhysPlaySim() end
+print(string.format("frozen reading: %.1f km/h while fresh, %.1f km/h after 6 s frozen", v_riding, rb.v * 3.6))
+assert(v_riding > 20 and rb.v * 3.6 < 5, "frozen numbers should count as stopped")
 -- lane change
 bike.keys[IN_MOVERIGHT] = true
 local l0 = rb.lane

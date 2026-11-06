@@ -11,6 +11,7 @@ local route_cv = CreateConVar("physplay_route", "rolling-hills", FCVAR_ARCHIVE +
 local SIM_DT, SEND_DT, GRADE_DT = 0.05, 0.1, 0.25
 local KEY_WATTS, KEY_WATTS_HARD = 200, 350
 local BIKE_FOLLOW_S = 0.6 -- how quickly the rider eases to each new bike reading
+local FROZEN_S = 2.8     -- seconds without a changed reading = you stopped pedalling
 local COAST_BRAKE = 3.5   -- m/s per second when you stop pedalling on the flat (30 km/h to 0 in about 2.5 s)
 
 PP.riders = PP.riders or {}
@@ -73,12 +74,15 @@ local function sim(dt)
       -- you stopped pedalling. Then the rider coasts (and rolls on downhill).
       local reading = data.speed_kmh .. ":" .. tostring(data.cadence) .. ":" .. tostring(data.power)
       if reading ~= rd.reading then
-        rd.reading = reading
+        rd.reading, rd.reading_t = reading, CurTime()
         rd.prev_speed, rd.prev_power = rd.cur_speed, rd.cur_power
         rd.cur_speed, rd.cur_power = data.speed_kmh, data.power or 0
       end
       local falling = rd.prev_speed and rd.cur_speed < rd.prev_speed - 1.5 and rd.cur_power < (rd.prev_power or 0) * 0.6
-      local coasting = (data.cadence or 0) < 5 or (data.power or 0) < 5 or falling
+      -- this bike freezes its last numbers when you stop, then jumps to 0 seconds later. While you
+      -- pedal the numbers change every ~2 s, so numbers that haven't changed for longer mean stopped.
+      local frozen = rd.reading_t and CurTime() - rd.reading_t > FROZEN_S
+      local coasting = (data.cadence or 0) < 5 or (data.power or 0) < 5 or falling or frozen
       rd.coasting = coasting
       if coasting then
         local kg = math.Clamp(ply:GetInfoNum("physplay_weight", 75), 30, 200)
