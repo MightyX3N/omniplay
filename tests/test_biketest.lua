@@ -59,3 +59,15 @@ assert(CLIP:find("Resistance, x10 int16: no effect"), "int16 verdict wrong")
 assert(CLIP:find("Use for this bike: hill simulation"), "conclusion wrong")
 local f = io.open("/tmp/bike-test-report.txt"); assert(f, "report file missing"); f:close()
 print("biketest tests passed")
+
+-- stopping halfway still leaves a partial report on disk
+os.remove("/tmp/bike-test-report.txt")
+CLIP = nil
+state, queue, bike_res = 0, {}, 1
+biketest.start(fake, function() end, { name = "FakeBike", addr = "AA" })
+for _ = 1, 4 * 30 do queue[#queue + 1] = { 0, bike_packet() }; biketest.update(0.25) end
+biketest.stop()
+local f2 = io.open("/tmp/bike-test-report.txt"); assert(f2, "partial report missing")
+local t = f2:read("*a"); f2:close()
+assert(t:find("incomplete: 3 of 9 steps") and t:find("Hill simulation: WORKS"), t)
+print("partial report ok")

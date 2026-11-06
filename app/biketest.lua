@@ -42,6 +42,7 @@ function M.start(lib, log_fn, dev)
 end
 
 function M.stop()
+  if auto and not auto.done and next(auto.results) then write_report(false) end
   if connected then send(ftms.STOP, "stop") end
   ble.sb_close()
   M.active, connected, connecting = false, false, false
@@ -94,11 +95,13 @@ local function changed(a, b)
   return dr >= 1 or dl > 0.25, dr, dl
 end
 
-local function write_report()
+local function write_report(final)
   local r, out = auto.results, {}
+  local nres = 0
+  for i = 1, #STEPS do if r[i] then nres = i end end
   local function add(x) out[#out + 1] = x end
   add("OmniPlay bike test report: " .. tostring(name))
-  add(os.date("%Y-%m-%d %H:%M"))
+  add(os.date("%Y-%m-%d %H:%M") .. (final and "" or string.format("   (incomplete: %d of %d steps)", nres, #STEPS)))
   add("")
   add(string.format("%-28s %10s %9s %8s %8s  %s", "step", "bike res", "power W", "rpm", "km/h", "bike reply"))
   for i, st in ipairs(STEPS) do
@@ -129,6 +132,7 @@ local function write_report()
   local f = io.open(report_path, "w")
   if f then f:write(text, "\n"); f:close() else report_path = nil end
   love.filesystem.write("bike-test-report.txt", text)
+  if not final then return end
   love.system.setClipboardText(text)
   for _, l in ipairs(out) do add_log("info", l) end
   add_log("info", report_path and ("report saved to " .. report_path) or "report copied to clipboard")
@@ -163,8 +167,9 @@ local function auto_update(dt)
     if auto.i > #STEPS then
       auto.done = true
       send(ftms.simulation(0), "auto: back to flat")
-      write_report()
+      write_report(true)
     else
+      write_report(false)
       begin_step()
     end
   end

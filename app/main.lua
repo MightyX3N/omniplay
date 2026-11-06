@@ -218,6 +218,8 @@ function love.load()
   fonts.ui = love.graphics.newFont(14)
   fonts.big = love.graphics.newFont(28)
   fonts.mono = love.graphics.newFont(13)
+  local okv, v = pcall(require, "version")
+  add_log("info", "OmniPlay build " .. (okv and v or "dev"))
   ble, load_err = load_dll()
   if ble then start_scan() end
 end
@@ -281,7 +283,10 @@ function love.keypressed(k)
   end
 end
 
-function love.quit() if ble then ble.sb_close(); ble.sb_scan_stop() end end
+function love.quit()
+  if biketest.active then biketest.stop() end
+  if ble then ble.sb_close(); ble.sb_scan_stop() end
+end
 
 -- ---------- drawing ----------
 local C = {

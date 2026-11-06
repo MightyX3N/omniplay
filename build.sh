@@ -17,7 +17,9 @@ if [ ! -d "$LOVE_DIR" ]; then
   unzip -q -o build/love.zip -d build
 fi
 
-# 3. Fuse the Lua app into OmniPlay.exe
+# 3. Stamp the build, then fuse the Lua app into OmniPlay.exe
+BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)$(git diff --quiet 2>/dev/null || echo +)"
+printf 'return "%s %s"\n' "$BUILD" "$(date -u +%Y-%m-%d)" > app/version.lua
 rm -rf dist && mkdir -p dist/OmniPlay
 (cd app && zip -q -9 -r ../build/game.love .)
 cat "$LOVE_DIR/love.exe" build/game.love > dist/OmniPlay/OmniPlay.exe
