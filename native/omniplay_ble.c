@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #define API __declspec(dllexport)
 
@@ -460,3 +461,236 @@ API int sb_read(unsigned char *buf, int maxlen)
 }
 
 API int sb_dropped(void) { return g_dropped; }
+
+/* ---------- device explorer (read-only) ----------
+ * Lists every service and characteristic of a device, reads the readable ones,
+ * and subscribes to the notifying ones for a few seconds to capture samples.
+ * Never writes a value to the device (only the standard notify/indicate
+ * subscription descriptor). Output is plain text lines, fetched with
+ * sb_explore_text():
+ *   service <uuid>
+ *   char <uuid> props <hex>
+ *   read <uuid> <hex bytes> | read <uuid> failed <status>
+ *   sub <uuid> ok|failed
+ *   notify <uuid> <hex bytes>
+ *   error <message>
+ */
+enum {
+    D3_SERVICES_MODE = 9,      /* IBluetoothLEDevice3::GetGattServicesWithCacheModeAsync */
+    S_UUID = 9,                /* IGattDeviceService::Uuid */
+    S3_CHARS_MODE = 12,        /* IGattDeviceService3::GetCharacteristicsWithCacheModeAsync */
+    C_UUID = 11, C_READ_MODE = 15,
+    RR_STATUS = 6, RR_VALUE = 7,
+};
+#define EXMAX 65536
+#define EXCHARS 48
+static char g_ex[EXMAX];
+static int g_exlen;
+static volatile LONG g_ex_state;      /* 0 idle, 1 running, 2 done, -1 failed */
+static HANDLE g_ex_thread;
+static UINT64 g_ex_addr;
+static DWORD g_ex_listen_ms;
+static GUID g_ex_ids[EXCHARS];
+static int g_ex_counts[EXCHARS], g_ex_n;
+
+static void ex_line(const char *fmt, ...)
+{
+    char tmp[1200];
+    va_list ap; va_start(ap, fmt); int n = vsnprintf(tmp, sizeof tmp - 2, fmt, ap); va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof tmp - 2) n = sizeof tmp - 2;
+    tmp[n++] = '\n';
+    EnterCriticalSection(&g_lock);
+    if (g_exlen + n < EXMAX) { memcpy(g_ex + g_exlen, tmp, n); g_exlen += n; g_ex[g_exlen] = 0; }
+    LeaveCriticalSection(&g_lock);
+}
+
+static void guid_str(const GUID *g, char *out)
+{
+    sprintf(out, "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", (unsigned long)g->Data1, g->Data2, g->Data3,
+            g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
+}
+
+static void hex_str(const BYTE *p, UINT32 n, char *out, int outlen)
+{
+    int k = 0;
+    for (UINT32 i = 0; i < n && k + 4 < outlen; i++) k += sprintf(out + k, i ? " %02X" : "%02X", p[i]);
+    out[k] = 0;
+}
+
+/* Copy an IBuffer's bytes as hex. */
+static void buffer_hex(void *buf, char *out, int outlen)
+{
+    void *bba = NULL; UINT32 n = 0; BYTE *p = NULL;
+    out[0] = 0;
+    FN(buf, B_LENGTH, GETU32_T)(buf, &n);
+    if (SUCCEEDED(qi(buf, &IID_IBufferByteAccess_, &bba))) {
+        FN(bba, BBA_BUFFER, HRESULT (WINAPI *)(void *, BYTE **))(bba, &p);
+        if (p) hex_str(p, n, out, outlen);
+        rel(bba);
+    }
+}
+
+static HRESULT WINAPI on_explore_changed(void *self, void *sender, void *args)
+{
+    (void)self;
+    GUID id; char u[40], hx[1100]; void *buf = NULL;
+    if (FAILED(FN(sender, C_UUID, HRESULT (WINAPI *)(void *, GUID *))(sender, &id))) return S_OK;
+    int i, keep = 0;
+    EnterCriticalSection(&g_lock);
+    for (i = 0; i < g_ex_n && !IsEqualGUID(&g_ex_ids[i], &id); i++) {}
+    if (i < g_ex_n && g_ex_counts[i] < 8) { g_ex_counts[i]++; keep = 1; }
+    LeaveCriticalSection(&g_lock);
+    if (!keep) return S_OK;
+    if (SUCCEEDED(FN(args, VC_VALUE, GETPTR_T)(args, &buf)) && buf) {
+        buffer_hex(buf, hx, sizeof hx);
+        guid_str(&id, u);
+        ex_line("notify %s %s", u, hx);
+        rel(buf);
+    }
+    return S_OK;
+}
+static void *explore_vtbl[] = { d_qi, d_addref, d_release, on_explore_changed };
+static Delegate g_explore_handler = { explore_vtbl, &IID_ValueChangedHandler };
+
+static DWORD WINAPI explore_thread(LPVOID p)
+{
+    (void)p;
+    ensure_ro();
+    void *statics = NULL, *op = NULL, *dev = NULL, *dev3 = NULL, *res = NULL, *svcs = NULL;
+    void *subs[EXCHARS]; EventRegistrationToken toks[EXCHARS]; int nsub = 0;
+    void *open_svcs[64]; int nsvc_open = 0;
+    INT32 st = -1; UINT32 nsvc = 0; HRESULT hr; char u[40], hx[1100];
+
+    hr = factory(L"Windows.Devices.Bluetooth.BluetoothLEDevice", &IID_IBLEDeviceStatics, &statics);
+    if (SUCCEEDED(hr)) hr = FN(statics, DS_FROMADDRESS, HRESULT (WINAPI *)(void *, UINT64, void **))(statics, g_ex_addr, &op);
+    rel(statics);
+    if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &dev);
+    if (FAILED(hr) || !dev) { ex_line("error couldn't open device (0x%08lX)", (unsigned long)hr); goto done_fail; }
+    if (FAILED(qi(dev, &IID_IBLEDevice3, &dev3))) { ex_line("error Windows too old"); goto done_fail; }
+
+    for (int attempt = 0; attempt < 3 && !svcs; attempt++) {
+        op = NULL; res = NULL; st = -1;
+        hr = FN(dev3, D3_SERVICES_MODE, HRESULT (WINAPI *)(void *, INT32, void **))(dev3, 1 /* Uncached */, &op);
+        if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &res);
+        if (SUCCEEDED(hr) && res) {
+            FN(res, SR_STATUS, GETI32_T)(res, &st);
+            if (st == 0) FN(res, SR_SERVICES, GETPTR_T)(res, &svcs);
+            rel(res);
+        }
+        if (!svcs) Sleep(1000);
+    }
+    rel(dev3);
+    if (!svcs) { ex_line("error couldn't read services: %s (0x%08lX). Close other apps using the device", gatt_status(st), (unsigned long)hr); goto done_fail; }
+    FN(svcs, VV_SIZE, GETU32_T)(svcs, &nsvc);
+
+    for (UINT32 s = 0; s < nsvc && s < 64; s++) {
+        void *svc = NULL, *svc3 = NULL, *cres = NULL, *chars = NULL; GUID sid; UINT32 nch = 0;
+        FN(svcs, VV_GETAT, HRESULT (WINAPI *)(void *, UINT32, void **))(svcs, s, &svc);
+        if (!svc) continue;
+        open_svcs[nsvc_open++] = svc;
+        FN(svc, S_UUID, HRESULT (WINAPI *)(void *, GUID *))(svc, &sid);
+        guid_str(&sid, u); ex_line("service %s", u);
+        if (FAILED(qi(svc, &IID_IGattDeviceService3, &svc3))) continue;
+        op = NULL; st = -1;
+        hr = FN(svc3, S3_CHARS_MODE, HRESULT (WINAPI *)(void *, INT32, void **))(svc3, 1, &op);
+        if (SUCCEEDED(hr)) hr = op_ptr(op, 10000, &cres);
+        rel(svc3);
+        if (FAILED(hr) || !cres) { ex_line("error characteristics of %s unreadable (0x%08lX)", u, (unsigned long)hr); continue; }
+        FN(cres, CR_STATUS, GETI32_T)(cres, &st);
+        if (st == 0) FN(cres, CR_CHARS, GETPTR_T)(cres, &chars);
+        rel(cres);
+        if (!chars) { ex_line("error characteristics of %s: %s", u, gatt_status(st)); continue; }
+        FN(chars, VV_SIZE, GETU32_T)(chars, &nch);
+        for (UINT32 c = 0; c < nch; c++) {
+            void *ch = NULL; GUID cid; UINT32 props = 0;
+            FN(chars, VV_GETAT, HRESULT (WINAPI *)(void *, UINT32, void **))(chars, c, &ch);
+            if (!ch) continue;
+            FN(ch, C_UUID, HRESULT (WINAPI *)(void *, GUID *))(ch, &cid);
+            FN(ch, C_PROPS, GETU32_T)(ch, &props);
+            guid_str(&cid, u); ex_line("char %s props %02X", u, props);
+            if (props & 0x02) {
+                void *rr = NULL, *val = NULL; INT32 rs = -1;
+                op = NULL;
+                hr = FN(ch, C_READ_MODE, HRESULT (WINAPI *)(void *, INT32, void **))(ch, 1, &op);
+                if (SUCCEEDED(hr)) hr = op_ptr(op, 5000, &rr);
+                if (SUCCEEDED(hr) && rr) {
+                    FN(rr, RR_STATUS, GETI32_T)(rr, &rs);
+                    if (rs == 0 && SUCCEEDED(FN(rr, RR_VALUE, GETPTR_T)(rr, &val)) && val) { buffer_hex(val, hx, sizeof hx); ex_line("read %s %s", u, hx); rel(val); }
+                    else ex_line("read %s failed %s", u, gatt_status(rs));
+                    rel(rr);
+                } else ex_line("read %s failed (0x%08lX)", u, (unsigned long)hr);
+            }
+            if ((props & 0x30) && nsub < EXCHARS) {
+                EnterCriticalSection(&g_lock);
+                g_ex_ids[g_ex_n] = cid; g_ex_counts[g_ex_n] = 0; g_ex_n++;
+                LeaveCriticalSection(&g_lock);
+                hr = FN(ch, C_ADD_CHANGED, HRESULT (WINAPI *)(void *, void *, EventRegistrationToken *))(ch, &g_explore_handler, &toks[nsub]);
+                INT32 ws = -1;
+                if (SUCCEEDED(hr)) {
+                    op = NULL;
+                    hr = FN(ch, C_WRITE_CCCD, HRESULT (WINAPI *)(void *, INT32, void **))(ch, (props & 0x10) ? 1 : 2, &op);
+                    if (SUCCEEDED(hr)) hr = op_i32(op, 5000, &ws);
+                }
+                ex_line("sub %s %s", u, SUCCEEDED(hr) && ws == 0 ? "ok" : "failed");
+                FN(ch, 1, ULONG (WINAPI *)(void *))(ch); /* AddRef: keep it for the listen window */
+                subs[nsub++] = ch;
+            }
+            rel(ch);
+        }
+        rel(chars);
+    }
+    rel(svcs);
+
+    ex_line("listening %lu", (unsigned long)g_ex_listen_ms);
+    Sleep(g_ex_listen_ms);
+    for (int i = 0; i < nsub; i++) {
+        FN(subs[i], C_REMOVE_CHANGED, HRESULT (WINAPI *)(void *, EventRegistrationToken))(subs[i], toks[i]);
+        rel(subs[i]);
+    }
+    for (int i = 0; i < nsvc_open; i++) {
+        void *cl;
+        if (SUCCEEDED(qi(open_svcs[i], &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); }
+        rel(open_svcs[i]);
+    }
+    { void *cl; if (SUCCEEDED(qi(dev, &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); } }
+    rel(dev);
+    ex_line("done");
+    InterlockedExchange(&g_ex_state, 2);
+    return 0;
+done_fail:
+    if (dev) rel(dev);
+    InterlockedExchange(&g_ex_state, -1);
+    return 1;
+}
+
+/* Start exploring the device at addr (12 hex digits); listen_ms for notifications. */
+API int sb_explore(const char *addr_hex, int listen_ms)
+{
+    init(); ensure_ro();
+    if (g_ex_state == 1) return -1;
+    if (g_ex_thread) { WaitForSingleObject(g_ex_thread, 30000); CloseHandle(g_ex_thread); g_ex_thread = NULL; }
+    g_ex_addr = strtoull(addr_hex, NULL, 16);
+    if (!g_ex_addr) return -2;
+    g_ex_listen_ms = listen_ms > 0 ? (DWORD)listen_ms : 8000;
+    EnterCriticalSection(&g_lock);
+    g_exlen = 0; g_ex[0] = 0; g_ex_n = 0;
+    LeaveCriticalSection(&g_lock);
+    InterlockedExchange(&g_ex_state, 1);
+    g_ex_thread = CreateThread(NULL, 0, explore_thread, NULL, 0, NULL);
+    if (!g_ex_thread) { InterlockedExchange(&g_ex_state, -1); return -3; }
+    return 0;
+}
+
+API int sb_explore_state(void) { return (int)g_ex_state; }
+
+/* Copy the explorer output so far. Returns its length. */
+API int sb_explore_text(char *out, int outlen)
+{
+    init();
+    EnterCriticalSection(&g_lock);
+    int n = g_exlen < outlen - 1 ? g_exlen : outlen - 1;
+    memcpy(out, g_ex, n); out[n] = 0;
+    LeaveCriticalSection(&g_lock);
+    return n;
+}

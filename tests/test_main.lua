@@ -56,6 +56,17 @@ local fake = {
   end,
   sb_dropped = function() return 0 end,
   sb_close = function() state = 0 end,
+  sb_explore = function(addr, ms) EXPLORED = addr; return 0 end,
+  sb_explore_state = function() return 2 end,
+  sb_explore_text = function(buf, n)
+    local b = "0000%s-0000-1000-8000-00805f9b34fb"
+    local t = table.concat({
+      "service " .. b:format("180a"), "char " .. b:format("2a29") .. " props 02", "read " .. b:format("2a29") .. " 43 48 52 49 53",
+      "service " .. b:format("1826"), "char " .. b:format("2acc") .. " props 02", "read " .. b:format("2acc") .. " 86 40 00 00 0C 00 00 00",
+      "char " .. b:format("2ad2") .. " props 10", "sub " .. b:format("2ad2") .. " ok", "listening 10000",
+      "notify " .. b:format("2ad2") .. " 64 00 28 0A B4 00 0A 00 96 00", "done" }, "\n")
+    ffi.copy(buf, t); return #t
+  end,
 }
 ffi.load = function() return fake end
 
@@ -71,4 +82,13 @@ assert(writes > 5, "writes " .. writes)
 assert(CLIP:find("frame cmd 19"), "no status frames decoded")
 love.keypressed("d")
 for _ = 1, 3 do love.update(0.2); love.draw() end
+-- explorer flow
+love.keypressed("e"); love.keypressed("2")
+for _ = 1, 3 do love.update(0.6); love.draw() end
+assert(EXPLORED == "AABBCCDDEEFF" or EXPLORED == "112233445566", tostring(EXPLORED))
+love.keypressed("c")
+print(CLIP:sub(1, 1200))
+assert(CLIP:find("resistance can be set"), "summary wrong")
+assert(CLIP:find("cadence 90.0 rpm") and CLIP:find("power 150 W") and CLIP:find("speed 26.00"), "bike data decode wrong")
+assert(CLIP:find('"CHRIS"'), "text decode wrong")
 print("main smoke test passed")

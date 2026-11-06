@@ -3,6 +3,7 @@
 -- This is the first building block of OmniPlay; the full app grows out of it.
 local ffi = require("ffi")
 local sperax = require("drivers.sperax")
+local explore = require("explore")
 
 ffi.cdef [[
   const char *sb_last_error(void);
@@ -16,6 +17,9 @@ ffi.cdef [[
   int  sb_read(unsigned char *buf, int maxlen);
   int  sb_dropped(void);
   void sb_close(void);
+  int  sb_explore(const char *addr_hex, int listen_ms);
+  int  sb_explore_state(void);
+  int  sb_explore_text(char *out, int outlen);
 ]]
 
 local SERVICE, NOTIFY, WRITE = "fff0", "fff1", "fff2"
@@ -150,7 +154,35 @@ local function moving()
   return step_hist[#step_hist].steps > step_hist[1].steps
 end
 
+-- ---------- device explorer ----------
+local explore_mode, exploring = false, false
+local ex_name, ex_raw, ex_lines, ex_summary, ex_t = nil, "", nil, nil, 0
+local ex_buf = ffi.new("char[65536]")
+
+local function refresh_explore()
+  ble.sb_explore_text(ex_buf, 65536)
+  ex_raw = ffi.string(ex_buf)
+  ex_lines, ex_summary = explore.report(ex_raw, ex_name)
+end
+
+local function start_explore(i)
+  local d = devices[i]
+  ble.sb_scan_stop()
+  if ble.sb_explore(d.addr, 10000) ~= 0 then add_log("err", "couldn't start the explorer"); start_scan(); return end
+  exploring, ex_name, ex_lines, ex_summary = true, d.name, nil, nil
+  add_log("info", "exploring " .. d.name .. " (" .. d.addr .. ")")
+end
+
 local function copy_log()
+  if ex_lines and not connected then
+    local text = table.concat(ex_lines, "\n") .. "\n\nSummary: " .. explore.summary_text(ex_summary or {}) ..
+      "\n\n--- raw ---\n" .. ex_raw
+    love.system.setClipboardText(text)
+    love.filesystem.write("explore-report.txt", text)
+    add_log("info", "report copied to clipboard, also saved to " .. love.filesystem.getSaveDirectory() .. "/explore-report.txt")
+    return
+  end
+
   local out = { "OmniPlay probe log", "device: " .. tostring(conn_name), "polls: " .. polls ..
     "  frames ok: " .. frames_ok .. "  bad: " .. frames_bad .. "  dropped: " .. (ble and ble.sb_dropped() or 0), "" }
   local from = math.max(1, #log - 80)
@@ -181,6 +213,15 @@ function love.update(dt)
       add_log("err", "connect failed: " .. ffi.string(ble.sb_last_error()))
       disconnect()
     end
+  elseif exploring then
+    ex_t = ex_t + dt
+    local st = ble.sb_explore_state()
+    if ex_t > 0.5 or st ~= 1 then ex_t = 0; refresh_explore() end
+    if st == 2 or st == -1 then
+      exploring = false
+      add_log(st == 2 and "info" or "err", st == 2 and ("explorer done: " .. explore.summary_text(ex_summary)) or "explorer failed, see report")
+      start_scan()
+    end
   elseif not connected then
     scan_t = scan_t + dt
     if scan_t > 0.5 then scan_t = 0; refresh_devices() end
@@ -198,7 +239,12 @@ function love.keypressed(k)
   if k == "d" then disconnect()
   elseif k == "p" then paused = not paused; add_log("info", paused and "polling paused" or "polling resumed")
   elseif k == "c" then copy_log()
-  elseif tonumber(k) and devices[tonumber(k)] and not connected and not connecting then connect(tonumber(k)) end
+  elseif k == "e" and not connected and not connecting and not exploring then
+    explore_mode = not explore_mode
+    add_log("info", explore_mode and "explore mode: press a number to list everything that device exposes" or "connect mode")
+  elseif tonumber(k) and devices[tonumber(k)] and not connected and not connecting and not exploring then
+    if explore_mode then start_explore(tonumber(k)) else connect(tonumber(k)) end
+  end
 end
 
 function love.quit() if ble then ble.sb_close(); ble.sb_scan_stop() end end
@@ -243,7 +289,8 @@ function love.draw()
   love.graphics.setColor(dot); love.graphics.circle("fill", 32, 40, 6)
   local head = connected and ("Connected: " .. tostring(conn_name))
     or connecting and ("Connecting to " .. tostring(conn_name) .. ": " .. ffi.string(ble.sb_status_text()))
-    or "Not connected"
+    or exploring and ("Exploring " .. tostring(ex_name) .. "...")
+    or (explore_mode and "Explore mode" or "Not connected")
   txt(head, 48, 22)
   txt(string.format("polls %d   frames ok %d   bad %d   dropped %d%s", polls, frames_ok, frames_bad,
     ble.sb_dropped(), paused and "   (paused)" or ""), 48, 42, C.dim)
@@ -253,7 +300,9 @@ function love.draw()
   if not connected then
     panel(12, y, W - 24, 40 + math.max(1, #devices) * 22)
     txt(connecting and "Connecting... (this can take up to 30 seconds)"
-      or "Nearby Bluetooth devices (press the number to connect). No pairing needed.", 28, y + 10, C.dim)
+      or exploring and "Exploring: reading services, then 10 s of live data. Use the machine now."
+      or explore_mode and "Explore mode: press a number to list everything that device exposes (E to go back)"
+      or "Nearby Bluetooth devices (press the number to connect, E for explore mode). No pairing needed.", 28, y + 10, C.dim)
     if #devices == 0 and not connecting then
       txt("Nothing yet. Turn the pad on and turn your phone's Bluetooth off.", 28, y + 34, C.dim)
     end
@@ -292,6 +341,21 @@ function love.draw()
     end
   end
 
+  -- explorer report (when there is one and no pad is connected)
+  if ex_lines and not connected then
+    panel(12, y, W - 24, H - y - 44)
+    local lh = 17
+    local maxl = math.floor((H - y - 80) / lh)
+    if ex_summary and not exploring then txt(explore.summary_text(ex_summary), 24, y + 8, C.acc) end
+    local from = math.max(1, #ex_lines - maxl + 1)
+    for i = from, #ex_lines do
+      local l = ex_lines[i]
+      txt(l, 24, y + 30 + (i - from) * lh, l:match("^ERROR") and C.bad or (l:match("^%[") and C.acc or C.text), fonts.mono)
+    end
+    txt("1-9 connect/explore   E explore mode   C copy report   Esc quit", 16, H - 28, C.dim)
+    return
+  end
+
   -- log
   panel(12, y, W - 24, H - y - 44)
   local lh = 17
@@ -303,5 +367,5 @@ function love.draw()
     txt(line, 24, y + 8 + (i - from) * lh, KIND[e.kind] or C.text, fonts.mono)
   end
 
-  txt("1-9 connect   D disconnect   P pause polling   C copy log   Esc quit", 16, H - 28, C.dim)
+  txt("1-9 connect   E explore mode   D disconnect   P pause polling   C copy log   Esc quit", 16, H - 28, C.dim)
 end
