@@ -1,6 +1,7 @@
 -- Device explorer report: turns the helper's raw lines (service/char/read/sub/notify)
 -- into a readable report, naming standard UUIDs and decoding FTMS capabilities.
 local bit = require("bit")
+local ftms = require("drivers.ftms")
 local band, lshift = bit.band, bit.lshift
 
 local M = {}
@@ -20,6 +21,7 @@ local NAMES = {
   ["2AD6"] = "Supported Resistance Range", ["2AD8"] = "Supported Power Range",
   ["2AD9"] = "FTMS Control Point", ["2ADA"] = "Fitness Machine Status",
   ["FFF0"] = "Vendor service (FFF0)",
+  ["f000ffc0-0451-4000-b000-000000000000"] = "TI firmware update (OAD), never touched",
 }
 local TEXT = { ["2A00"] = true, ["2A24"] = true, ["2A25"] = true, ["2A26"] = true, ["2A27"] = true, ["2A28"] = true, ["2A29"] = true }
 
@@ -62,19 +64,7 @@ local function props_str(p)
   return table.concat(t, ", ")
 end
 
--- Decode the most useful fields of an FTMS Indoor Bike Data notification.
-function M.indoor_bike(b)
-  local flags, i, out = u16(b, 1), 3, {}
-  local function has(n) return band(flags, lshift(1, n)) ~= 0 end
-  if not has(0) then out[#out + 1] = string.format("speed %.2f km/h", u16(b, i) / 100); i = i + 2 end
-  if has(1) then i = i + 2 end
-  if has(2) then out[#out + 1] = string.format("cadence %.1f rpm", u16(b, i) / 2); i = i + 2 end
-  if has(3) then i = i + 2 end
-  if has(4) then i = i + 3 end
-  if has(5) then out[#out + 1] = "resistance " .. s16(b, i); i = i + 2 end
-  if has(6) then out[#out + 1] = "power " .. s16(b, i) .. " W"; i = i + 2 end
-  return table.concat(out, ", ")
-end
+function M.indoor_bike(b) return ftms.bike_text(ftms.indoor_bike(b)) end
 
 local function decode_read(id, b, hex)
   if TEXT[id] then

@@ -34,7 +34,7 @@ local fake = {
     ffi.copy(buf, s)
     return 3
   end,
-  sb_open = function(addr) assert(addr == "AABBCCDDEEFF", addr); state = 2; return 0 end,
+  sb_open = function(addr) assert(addr == "AABBCCDDEEFF" or addr == "DEADBEEF0000", addr); state = 2; return 0 end,
   sb_write = function(data, len)
     writes = writes + 1
     local sent = {}
@@ -55,6 +55,13 @@ local fake = {
     return #c
   end,
   sb_dropped = function() return 0 end,
+  sb_read_ex = function(buf, max, which)
+    local c = table.remove(BIKEQ or {}, 1)
+    if not c then return 0 end
+    which[0] = c[1]
+    for i, v in ipairs(c[2]) do buf[i - 1] = v end
+    return #c[2]
+  end,
   sb_close = function() state = 0 end,
   sb_explore = function(addr, ms) EXPLORED = addr; return 0 end,
   sb_explore_state = function() return 2 end,
@@ -91,4 +98,30 @@ print(CLIP:sub(1, 1200))
 assert(CLIP:find("resistance can be set"), "summary wrong")
 assert(CLIP:find("cadence 90.0 rpm") and CLIP:find("power 150 W") and CLIP:find("speed 26.00"), "bike data decode wrong")
 assert(CLIP:find('"CHRIS"'), "text decode wrong")
+-- bike test flow: B mode, pick the FTMS device, check commands and decoding
+BIKEQ = {}
+local sent = {}
+local orig_write = fake.sb_write
+fake.sb_write = function(data, len)
+  local t = {}
+  for i = 0, len - 1 do t[#t + 1] = string.format("%02X", data[i]) end
+  sent[#sent + 1] = table.concat(t, " ")
+  if t[1] == "00" then BIKEQ[#BIKEQ + 1] = { 1, { 0x80, 0x00, 0x01 } } end
+  if t[1] == "11" then BIKEQ[#BIKEQ + 1] = { 1, { 0x80, 0x11, 0x01 } }; BIKEQ[#BIKEQ + 1] = { 2, { 0x12 } } end
+  return 0
+end
+love.keypressed("e") -- leave explore mode
+love.keypressed("b"); love.keypressed("2")
+for _ = 1, 3 do love.update(0.1); love.draw() end
+BIKEQ[#BIKEQ + 1] = { 0, { 0xFE, 0x1F, 0x00, 0x0A, 0, 0, 0xAA, 0, 0, 0, 0, 0, 0, 0x0C, 0, 0x8C, 0, 0, 0, 0, 0, 0, 0, 0, 0x82, 0, 0x3D, 0, 0, 0 } }
+love.keypressed("up"); love.keypressed("up"); love.keypressed("right")
+for _ = 1, 3 do love.update(0.1); love.draw() end
+love.keypressed("c")
+print(CLIP:sub(1, 700))
+assert(sent[1] == "00" and sent[2] == "07" and sent[3] == "11 00 00 00 00 28 33", table.concat(sent, " | "))
+assert(sent[5] == "11 00 00 C8 00 28 33", "hill +2% wrong: " .. tostring(sent[5]))
+assert(sent[6] == "04 6E", "resistance 11 wrong: " .. tostring(sent[6]))
+assert(CLIP:find("speed 25.60 km/h") and CLIP:find("set simulation: success") and CLIP:find("simulation changed"), "bike test log wrong")
+love.keypressed("d")
+assert(sent[#sent] == "08 01", "stop not sent on disconnect")
 print("main smoke test passed")

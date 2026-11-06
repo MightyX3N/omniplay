@@ -72,7 +72,7 @@ enum {
     SR_STATUS = 6, SR_SERVICES = 8,                     /* IGattDeviceServicesResult */
     S3_CHARS_FOR_UUID_MODE = 14,                        /* IGattDeviceService3 */
     CR_STATUS = 6, CR_CHARS = 8,                        /* IGattCharacteristicsResult */
-    C_PROPS = 7, C_WRITE_OPT = 17, C_WRITE_CCCD = 19, C_ADD_CHANGED = 20, C_REMOVE_CHANGED = 21,
+    C_PROPS = 7, C_UUID = 11, C_WRITE_OPT = 17, C_WRITE_CCCD = 19, C_ADD_CHANGED = 20, C_REMOVE_CHANGED = 21,
     VC_VALUE = 6,                                       /* IGattValueChangedEventArgs */
     BF_CREATE = 6, B_LENGTH = 7, B_PUT_LENGTH = 8, BBA_BUFFER = 3,
     CL_CLOSE = 6,
@@ -93,18 +93,19 @@ static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 static char g_err[512], g_status[256];
 static volatile LONG g_state;            /* 0 idle, 1 connecting, 2 connected, -1 failed */
 static unsigned char g_q[QCAP][PKTMAX];
-static int g_qlen[QCAP], g_qhead, g_qtail, g_dropped;
+static int g_qlen[QCAP], g_qwhich[QCAP], g_qhead, g_qtail, g_dropped;
 static Dev g_devs[MAXDEV];
 static int g_ndev;
 
 static void *g_watcher;
 static EventRegistrationToken g_recv_tok;
-static void *g_device, *g_service, *g_notify, *g_write, *g_buffactory;
-static EventRegistrationToken g_change_tok;
+#define MAXNOTIFY 4
+static void *g_device, *g_service, *g_notify[MAXNOTIFY], *g_write, *g_buffactory;
+static EventRegistrationToken g_change_tok[MAXNOTIFY];
 static int g_write_noresp;
 static HANDLE g_thread;
-static GUID g_svc, g_nchar, g_wchar;
-static int g_has_n, g_has_w;
+static GUID g_svc, g_nchar[MAXNOTIFY], g_wchar;
+static int g_nnotify, g_has_w;
 static UINT64 g_addr;
 
 static BOOL CALLBACK init_once(PINIT_ONCE o, PVOID p, PVOID *c) { (void)o; (void)p; (void)c; InitializeCriticalSection(&g_lock); return TRUE; }
@@ -222,8 +223,10 @@ static HRESULT WINAPI on_received(void *self, void *sender, void *args)
 
 static HRESULT WINAPI on_changed(void *self, void *sender, void *args)
 {
-    (void)self; (void)sender;
-    void *buf = NULL, *bba = NULL; UINT32 n = 0; BYTE *p = NULL;
+    (void)self;
+    void *buf = NULL, *bba = NULL; UINT32 n = 0; BYTE *p = NULL; GUID id; int which = 0;
+    if (SUCCEEDED(FN(sender, C_UUID, HRESULT (WINAPI *)(void *, GUID *))(sender, &id)))
+        for (int i = 0; i < g_nnotify; i++) if (IsEqualGUID(&id, &g_nchar[i])) { which = i; break; }
     if (FAILED(FN(args, VC_VALUE, GETPTR_T)(args, &buf)) || !buf) return S_OK;
     FN(buf, B_LENGTH, GETU32_T)(buf, &n);
     if (SUCCEEDED(qi(buf, &IID_IBufferByteAccess_, &bba))) {
@@ -233,7 +236,7 @@ static HRESULT WINAPI on_changed(void *self, void *sender, void *args)
             EnterCriticalSection(&g_lock);
             int next = (g_qtail + 1) % QCAP;
             if (next == g_qhead) g_dropped++;
-            else { memcpy(g_q[g_qtail], p, n); g_qlen[g_qtail] = (int)n; g_qtail = next; }
+            else { memcpy(g_q[g_qtail], p, n); g_qlen[g_qtail] = (int)n; g_qwhich[g_qtail] = which; g_qtail = next; }
             LeaveCriticalSection(&g_lock);
         }
         rel(bba);
@@ -299,9 +302,9 @@ API int sb_scan_list(char *out, int outlen)
 /* ---------- connecting ---------- */
 static void release_conn(void)
 {
-    if (g_notify) {
-        FN(g_notify, C_REMOVE_CHANGED, HRESULT (WINAPI *)(void *, EventRegistrationToken))(g_notify, g_change_tok);
-        rel(g_notify); g_notify = NULL;
+    for (int i = 0; i < MAXNOTIFY; i++) if (g_notify[i]) {
+        FN(g_notify[i], C_REMOVE_CHANGED, HRESULT (WINAPI *)(void *, EventRegistrationToken))(g_notify[i], g_change_tok[i]);
+        rel(g_notify[i]); g_notify[i] = NULL;
     }
     rel(g_write); g_write = NULL;
     void *cl;
@@ -380,7 +383,8 @@ static DWORD WINAPI connect_thread(LPVOID p)
     set_status("Finding characteristics...");
     hr = qi(g_service, &IID_IGattDeviceService3, &svc3);
     if (FAILED(hr)) { set_err("GATT service interface missing", hr); goto fail; }
-    if (g_has_n && FAILED(hr = get_char(svc3, &g_nchar, &g_notify))) { set_err("Notify characteristic not found", hr); rel(svc3); goto fail; }
+    for (int i = 0; i < g_nnotify; i++)
+        if (FAILED(hr = get_char(svc3, &g_nchar[i], &g_notify[i]))) { set_err("Notify characteristic not found", hr); rel(svc3); goto fail; }
     if (g_has_w && FAILED(hr = get_char(svc3, &g_wchar, &g_write))) { set_err("Write characteristic not found", hr); rel(svc3); goto fail; }
     rel(svc3);
 
@@ -389,15 +393,15 @@ static DWORD WINAPI connect_thread(LPVOID p)
         FN(g_write, C_PROPS, GETU32_T)(g_write, &props);
         g_write_noresp = (props & 0x4) != 0;
     }
-    if (g_notify) {
+    for (int i = 0; i < g_nnotify; i++) {
         set_status("Subscribing to notifications...");
-        hr = FN(g_notify, C_ADD_CHANGED, HRESULT (WINAPI *)(void *, void *, EventRegistrationToken *))(g_notify, &g_change_handler, &g_change_tok);
+        hr = FN(g_notify[i], C_ADD_CHANGED, HRESULT (WINAPI *)(void *, void *, EventRegistrationToken *))(g_notify[i], &g_change_handler, &g_change_tok[i]);
         if (FAILED(hr)) { set_err("Couldn't attach notification handler", hr); goto fail; }
         UINT32 props = 0;
-        FN(g_notify, C_PROPS, GETU32_T)(g_notify, &props);
+        FN(g_notify[i], C_PROPS, GETU32_T)(g_notify[i], &props);
         INT32 cccd = (props & 0x10) ? 1 : 2; /* Notify, else Indicate */
         op = NULL; st = -1;
-        hr = FN(g_notify, C_WRITE_CCCD, HRESULT (WINAPI *)(void *, INT32, void **))(g_notify, cccd, &op);
+        hr = FN(g_notify[i], C_WRITE_CCCD, HRESULT (WINAPI *)(void *, INT32, void **))(g_notify[i], cccd, &op);
         if (SUCCEEDED(hr)) hr = op_i32(op, 10000, &st);
         if (FAILED(hr) || st != 0) {
             char m[96]; snprintf(m, sizeof m, "Subscribing failed: %s", FAILED(hr) ? "error" : gatt_status(st));
@@ -425,7 +429,8 @@ API void sb_close(void)
     InterlockedExchange(&g_state, 0);
 }
 
-/* Start connecting in the background. addr is 12 hex digits. Poll sb_state(). */
+/* Start connecting in the background. addr is 12 hex digits; notify_uuids is a
+ * comma-separated list (up to 4, may be empty). Poll sb_state(). */
 API int sb_open(const char *addr_hex, const char *service, const char *notify_uuid, const char *write_uuid)
 {
     init(); ensure_ro();
@@ -433,7 +438,12 @@ API int sb_open(const char *addr_hex, const char *service, const char *notify_uu
     g_err[0] = 0;
     g_addr = strtoull(addr_hex, NULL, 16);
     if (!g_addr || !parse_uuid(service, &g_svc)) { snprintf(g_err, sizeof g_err, "bad address or service uuid"); return -1; }
-    g_has_n = notify_uuid && notify_uuid[0] && parse_uuid(notify_uuid, &g_nchar);
+    g_nnotify = 0;
+    if (notify_uuid) {
+        char list[256]; snprintf(list, sizeof list, "%s", notify_uuid);
+        for (char *t = strtok(list, ","); t && g_nnotify < MAXNOTIFY; t = strtok(NULL, ","))
+            if (*t && parse_uuid(t, &g_nchar[g_nnotify])) g_nnotify++;
+    }
     g_has_w = write_uuid && write_uuid[0] && parse_uuid(write_uuid, &g_wchar);
     InterlockedExchange(&g_state, 1);
     g_thread = CreateThread(NULL, 0, connect_thread, NULL, 0, NULL);
@@ -480,6 +490,23 @@ API int sb_read(unsigned char *buf, int maxlen)
     return n;
 }
 
+/* Like sb_read, also returns which notify characteristic (index into the
+ * sb_open list) the packet came from. */
+API int sb_read_ex(unsigned char *buf, int maxlen, int *which)
+{
+    init();
+    int n = 0;
+    EnterCriticalSection(&g_lock);
+    if (g_qhead != g_qtail) {
+        n = g_qlen[g_qhead] < maxlen ? g_qlen[g_qhead] : maxlen;
+        memcpy(buf, g_q[g_qhead], n);
+        if (which) *which = g_qwhich[g_qhead];
+        g_qhead = (g_qhead + 1) % QCAP;
+    }
+    LeaveCriticalSection(&g_lock);
+    return n;
+}
+
 API int sb_dropped(void) { return g_dropped; }
 
 /* ---------- device explorer (read-only) ----------
@@ -499,7 +526,7 @@ enum {
     D3_SERVICES_MODE = 9,      /* IBluetoothLEDevice3::GetGattServicesWithCacheModeAsync */
     S_UUID = 9,                /* IGattDeviceService::Uuid */
     S3_CHARS_MODE = 12,        /* IGattDeviceService3::GetCharacteristicsWithCacheModeAsync */
-    C_UUID = 11, C_READ_MODE = 15,
+    C_READ_MODE = 15,
     RR_STATUS = 6, RR_VALUE = 7,
 };
 #define EXMAX 65536

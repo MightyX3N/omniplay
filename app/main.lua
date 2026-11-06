@@ -5,6 +5,7 @@ local ffi = require("ffi")
 local bit = require("bit")
 local sperax = require("drivers.sperax")
 local explore = require("explore")
+local biketest = require("biketest")
 
 ffi.cdef [[
   const char *sb_last_error(void);
@@ -18,6 +19,7 @@ ffi.cdef [[
   int  sb_read(unsigned char *buf, int maxlen);
   int  sb_dropped(void);
   void sb_close(void);
+  int  sb_read_ex(unsigned char *buf, int maxlen, int *which);
   int  sb_explore(const char *addr_hex, int listen_ms);
   int  sb_explore_state(void);
   int  sb_explore_text(char *out, int outlen);
@@ -170,7 +172,7 @@ local function moving()
 end
 
 -- ---------- device explorer ----------
-local explore_mode, exploring = false, false
+local list_mode, exploring = "connect", false -- connect | explore | bike
 local ex_name, ex_raw, ex_lines, ex_summary, ex_t = nil, "", nil, nil, 0
 local ex_buf = ffi.new("char[65536]")
 
@@ -189,7 +191,7 @@ local function start_explore(i)
 end
 
 local function copy_log()
-  if ex_lines and not connected then
+  if ex_lines and not connected and not biketest.active then
     local text = table.concat(ex_lines, "\n") .. "\n\nSummary: " .. explore.summary_text(ex_summary or {}) ..
       "\n\n--- raw ---\n" .. ex_raw
     love.system.setClipboardText(text)
@@ -200,6 +202,7 @@ local function copy_log()
 
   local out = { "OmniPlay probe log", "device: " .. tostring(conn_name), "polls: " .. polls ..
     "  frames ok: " .. frames_ok .. "  bad: " .. frames_bad .. "  dropped: " .. (ble and ble.sb_dropped() or 0), "" }
+  if biketest.active then for _, l in ipairs(biketest.summary()) do out[#out + 1] = l end; out[#out + 1] = "" end
   local from = math.max(1, #log - 80)
   for i = from, #log do
     local e = log[i]
@@ -221,6 +224,11 @@ end
 
 function love.update(dt)
   if not ble then return end
+  if biketest.active then
+    biketest.update()
+    if not biketest.active then start_scan() end
+    return
+  end
   if connecting then
     local st = ble.sb_state()
     if st == 2 then on_connected()
@@ -251,14 +259,25 @@ end
 function love.keypressed(k)
   if k == "escape" then love.event.quit() end
   if not ble then return end
+  if biketest.active then
+    if biketest.keypressed(k) then return end
+    if k == "d" then biketest.stop(); add_log("info", "bike test ended"); start_scan()
+    elseif k == "c" then copy_log() end
+    return
+  end
   if k == "d" then disconnect()
   elseif k == "p" then paused = not paused; add_log("info", paused and "polling paused" or "polling resumed")
   elseif k == "c" then copy_log()
-  elseif k == "e" and not connected and not connecting and not exploring then
-    explore_mode = not explore_mode
-    add_log("info", explore_mode and "explore mode: press a number to list everything that device exposes" or "connect mode")
+  elseif (k == "e" or k == "b") and not connected and not connecting and not exploring then
+    local want = k == "e" and "explore" or "bike"
+    list_mode = list_mode == want and "connect" or want
+    add_log("info", list_mode == "explore" and "explore mode: press a number to list everything that device exposes"
+      or list_mode == "bike" and "bike test mode: press a number to take control of that FTMS bike" or "connect mode")
   elseif tonumber(k) and devices[tonumber(k)] and not connected and not connecting and not exploring then
-    if explore_mode then start_explore(tonumber(k)) else connect(tonumber(k)) end
+    local d = devices[tonumber(k)]
+    if list_mode == "explore" then start_explore(tonumber(k))
+    elseif list_mode == "bike" then ex_lines = nil; biketest.start(ble, add_log, d)
+    else connect(tonumber(k)) end
   end
 end
 
@@ -305,19 +324,23 @@ function love.draw()
   local head = connected and ("Connected: " .. tostring(conn_name))
     or connecting and ("Connecting to " .. tostring(conn_name) .. ": " .. ffi.string(ble.sb_status_text()))
     or exploring and ("Exploring " .. tostring(ex_name) .. "...")
-    or (explore_mode and "Explore mode" or "Not connected")
+    or biketest.active and "Bike test"
+    or (list_mode == "explore" and "Explore mode" or list_mode == "bike" and "Bike test mode" or "Not connected")
   txt(head, 48, 22)
   txt(string.format("polls %d   frames ok %d   bad %d   dropped %d%s", polls, frames_ok, frames_bad,
     ble.sb_dropped(), paused and "   (paused)" or ""), 48, 42, C.dim)
 
   -- device list / decoded values
   local y = 80
-  if not connected then
+  if biketest.active then
+    y = biketest.draw(y, W, txt, panel, metric, C, fonts)
+  elseif not connected then
     panel(12, y, W - 24, 40 + math.max(1, #devices) * 22)
     txt(connecting and "Connecting... (this can take up to 30 seconds)"
       or exploring and "Exploring: reading services, then 10 s of live data. Use the machine now."
-      or explore_mode and "Explore mode: press a number to list everything that device exposes (E to go back)"
-      or "Nearby Bluetooth devices (press the number to connect, E for explore mode). No pairing needed.", 28, y + 10, C.dim)
+      or list_mode == "explore" and "Explore mode: press a number to list everything that device exposes (E to go back)"
+      or list_mode == "bike" and "Bike test mode: press the number of your FTMS bike (B to go back)"
+      or "Nearby devices: number = connect Sperax pad, E = explore mode, B = bike test mode. No pairing needed.", 28, y + 10, C.dim)
     if #devices == 0 and not connecting then
       txt("Nothing yet. Turn the device on (pedal a few strokes to wake a bike) and turn your phone's Bluetooth off.", 28, y + 34, C.dim)
     end
@@ -357,7 +380,7 @@ function love.draw()
   end
 
   -- explorer report (when there is one and no pad is connected)
-  if ex_lines and not connected then
+  if ex_lines and not connected and not biketest.active then
     panel(12, y, W - 24, H - y - 44)
     local lh = 17
     local maxl = math.floor((H - y - 80) / lh)
@@ -367,7 +390,7 @@ function love.draw()
       local l = ex_lines[i]
       txt(l, 24, y + 30 + (i - from) * lh, l:match("^ERROR") and C.bad or (l:match("^%[") and C.acc or C.text), fonts.mono)
     end
-    txt("1-9 connect/explore   E explore mode   C copy report   Esc quit", 16, H - 28, C.dim)
+    txt("1-9 connect/explore   E explore   B bike test   C copy report   Esc quit", 16, H - 28, C.dim)
     return
   end
 
@@ -382,5 +405,6 @@ function love.draw()
     txt(line, 24, y + 8 + (i - from) * lh, KIND[e.kind] or C.text, fonts.mono)
   end
 
-  txt("1-9 connect   E explore mode   D disconnect   P pause polling   C copy log   Esc quit", 16, H - 28, C.dim)
+  txt(biketest.active and "Up/Down hill   Left/Right resistance   M encoding   S start   X stop   D disconnect   C copy log   Esc quit"
+    or "1-9 connect   E explore   B bike test   D disconnect   P pause polling   C copy log   Esc quit", 16, H - 28, C.dim)
 end
