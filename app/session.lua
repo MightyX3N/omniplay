@@ -100,14 +100,13 @@ end
 function M.finish()
   local s = M.cur
   M.state, M.cur, moving_t, idle_t, M.user_paused = "idle", nil, 0, 0, false
-  love.filesystem.remove("current.lua")
+  store.remove("current.lua")
   if not s or s.elapsed < MIN_KEEP then
     if s then M.log("info", "session under " .. MIN_KEEP .. " s, not saved") end
     return nil
   end
   s.sport = sport_for(s.kind, s.elapsed > 0 and s.distance / s.elapsed * 3.6 or 0)
   local sum = summarize(s)
-  love.filesystem.createDirectory("sessions")
   store.save("sessions/" .. sum.id .. ".lua", s)
   local fit = M.export_files(s, sum.id)
   sum.fit = fit

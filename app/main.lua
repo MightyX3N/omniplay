@@ -109,6 +109,7 @@ function love.load()
   local okv, v = pcall(require, "version")
   build = okv and v or "dev"
   love.window.setTitle("OmniPlay  (build " .. build .. ")")
+  store.migrate()
   ui.load()
   ble, load_err = bleload.load()
   saved = store.load("devices.lua", saved)

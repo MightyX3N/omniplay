@@ -3,7 +3,11 @@
 -- and draws every tab each step so UI code paths run.
 package.path = "app/?.lua;" .. package.path
 local ffi = require("ffi")
-os.execute("rm -rf /tmp/omni-main && mkdir -p /tmp/omni-main/activities")
+os.execute("rm -rf /tmp/omni-main && mkdir -p /tmp/omni-main/activities /tmp/omni-main/save")
+-- a profiles file from an older build sits at the top of the save folder: it must move to data/
+local old = io.open("/tmp/omni-main/save/profiles.lua", "w")
+old:write('return { { name = "Old profile", exe = "", walk = { keys = { "w" }, pad_kmh = 1, rpm = 30 }, run = { keys = { "w" }, pad_kmh = 3.5, rpm = 70 }, sprint = { keys = { "w", "lshift" }, pad_kmh = 5, watts = 200 }, hold_s = 2 } }\n')
+old:close()
 
 local mem, clock = {}, 0
 local noop = function() end
@@ -21,6 +25,7 @@ love = {
     createDirectory = noop,
     getSource = function() return "/tmp/omni-main" end,
     getSourceBaseDirectory = function() return "/tmp/omni-main" end,
+    getSaveDirectory = function() return "/tmp/omni-main/save" end,
   },
   graphics = graphics,
   mouse = { getPosition = function() return 0, 0 end, setCursor = noop, getSystemCursor = noop },
@@ -66,6 +71,8 @@ package.loaded["ble"] = { load = function() return lib end }
 require("main")
 local T = love._omniplay
 love.load()
+assert(require("output").profiles[1].name == "Old profile", "old saved profiles should be migrated")
+assert(not io.open("/tmp/omni-main/save/profiles.lua"), "old file should be gone")
 
 local tabs = { "Session", "Devices", "Profiles", "History" }
 local frame = 0
@@ -131,6 +138,6 @@ love.keypressed("f8")
 local output = require("output")
 assert(output.enabled, "F8 should enable output")
 love.quit()
-assert(mem["devices.lua"] and mem["devices.lua"]:find("HT2405118"), "devices should be saved")
+assert(mem["data/devices.lua"] and mem["data/devices.lua"]:find("HT2405118"), "devices should be saved")
 for _, e in ipairs(T.log()) do print("  " .. e.kind .. " " .. e.text) end
 print("main smoke test ok")
