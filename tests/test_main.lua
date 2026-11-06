@@ -114,14 +114,13 @@ love.keypressed("e") -- leave explore mode
 love.keypressed("b"); love.keypressed("2")
 for _ = 1, 3 do love.update(0.1); love.draw() end
 BIKEQ[#BIKEQ + 1] = { 0, { 0xFE, 0x1F, 0x00, 0x0A, 0, 0, 0xAA, 0, 0, 0, 0, 0, 0, 0x0C, 0, 0x8C, 0, 0, 0, 0, 0, 0, 0, 0, 0x82, 0, 0x3D, 0, 0, 0 } }
-love.keypressed("up"); love.keypressed("up"); love.keypressed("right")
+love.keypressed("up") -- ignored while the automatic test runs
 for _ = 1, 3 do love.update(0.1); love.draw() end
 love.keypressed("c")
 print(CLIP:sub(1, 700))
 assert(sent[1] == "00" and sent[2] == "07" and sent[3] == "11 00 00 00 00 28 33", table.concat(sent, " | "))
-assert(sent[5] == "11 00 00 C8 00 28 33", "hill +2% wrong: " .. tostring(sent[5]))
-assert(sent[6] == "04 6E", "resistance 11 wrong: " .. tostring(sent[6]))
-assert(CLIP:find("speed 25.60 km/h") and CLIP:find("set simulation: success") and CLIP:find("simulation changed"), "bike test log wrong")
+assert(sent[4] == "11 00 00 00 00 28 33" and #sent == 4, "auto test should start with flat once pedalling: " .. table.concat(sent, " | "))
+assert(CLIP:find("pedalling detected, test started") and CLIP:find("set simulation: success") and CLIP:find("simulation changed"), "bike test log wrong")
 love.keypressed("d")
 assert(sent[#sent] == "08 01", "stop not sent on disconnect")
 print("main smoke test passed")
