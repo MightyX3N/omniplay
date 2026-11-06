@@ -6,6 +6,7 @@ local bit = require("bit")
 local sperax = require("drivers.sperax")
 local explore = require("explore")
 local biketest = require("biketest")
+local padtest = require("padtest")
 
 ffi.cdef [[
   const char *sb_last_error(void);
@@ -118,6 +119,7 @@ local function on_connected()
 end
 
 local function disconnect(why)
+  padtest.stop(why or "disconnected")
   if ble then ble.sb_close() end
   if connected or connecting then add_log("info", "disconnected" .. (why and (": " .. why) or "")) end
   connected, connecting = false, false
@@ -153,6 +155,8 @@ local function pump()
         f.len_ok and "ok" or "BAD", f.crc_ok == nil and "?" or (f.crc_ok and "ok" or "BAD"))
       if f.junk > 0 then tag = tag .. "  (dropped " .. f.junk .. " junk byte" .. (f.junk > 1 and "s" or "") .. ")" end
       add_log("frame", tag .. "  |  " .. sperax.hex(f.b))
+      if f.cmd == 0x19 and f.crc_ok then status = sperax.decode_status(f) or status end
+      padtest.on_frame(f, status)
       if f.cmd == 0x19 then
         last_frame = f
         local s = sperax.decode_status(f)
@@ -253,12 +257,14 @@ function love.update(dt)
   end
   if connected then
     pump()
+    padtest.update(dt, status)
     poll_t = poll_t + dt
     if poll_t >= POLL_EVERY and not paused then poll_t = 0; poll() end
   end
 end
 
 function love.keypressed(k)
+  if k == "space" then padtest.stop("Space pressed") end
   if k == "escape" then love.event.quit() end
   if not ble then return end
   if biketest.active then
@@ -268,6 +274,8 @@ function love.keypressed(k)
     return
   end
   if k == "d" then disconnect()
+  elseif k == "t" and connected then
+    if padtest.armed then padtest.start() elseif not padtest.active then padtest.arm(ble, add_log) end
   elseif k == "p" then paused = not paused; add_log("info", paused and "polling paused" or "polling resumed")
   elseif k == "c" then copy_log()
   elseif (k == "e" or k == "b") and not connected and not connecting and not exploring then
@@ -284,6 +292,7 @@ function love.keypressed(k)
 end
 
 function love.quit()
+  padtest.stop("app closed")
   if biketest.active then biketest.stop() end
   if ble then ble.sb_close(); ble.sb_scan_stop() end
 end
@@ -366,6 +375,8 @@ function love.draw()
     else
       txt("Waiting for a status frame (0x19)...", 28, y + 34, C.dim)
     end
+    local hint = padtest.hint()
+    txt(hint or "T = pad speed test (moves the belt, max 3 km/h)", 28, y + 74, hint and C.bad or C.dim)
     y = y + 108
 
     -- hex grid of last status frame
