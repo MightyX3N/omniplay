@@ -10,6 +10,7 @@ util.AddNetworkString("physplay_state")
 local route_cv = CreateConVar("physplay_route", "rolling-hills", FCVAR_ARCHIVE + FCVAR_NOTIFY, "PhysPlay route id")
 local SIM_DT, SEND_DT, GRADE_DT = 0.05, 0.1, 0.25
 local KEY_WATTS, KEY_WATTS_HARD = 200, 350
+local BIKE_FOLLOW_S = 0.6 -- how quickly the rider eases to each new bike reading
 
 PP.riders = PP.riders or {}
 local function route() return PP.route end
@@ -65,7 +66,14 @@ local function sim(dt)
     elseif data and (data.kind == "treadmill" or data.kind == "footpod") then rd.mode = PP.MODE.RUN
     else rd.mode = PP.MODE.KEYS end
 
-    if rd.mode == PP.MODE.RUN then
+    if rd.mode == PP.MODE.BIKE and data.speed_kmh then
+      -- follow the bike's own speed directly (no physics delay on top of the console's):
+      -- hills reach you as resistance on the trainer, which slows the flywheel itself
+      local target = data.speed_kmh / 3.6
+      if (data.cadence or 0) < 1 and (data.power or 0) < 1 and target < 1 then target = 0 end
+      rd.v = rd.v + (target - rd.v) * math.min(1, dt / BIKE_FOLLOW_S)
+      rd.watts, rd.cadence = data.power or 0, data.cadence or 0
+    elseif rd.mode == PP.MODE.RUN then
       -- runners move at their real belt / footpod speed
       local target = (data.speed_kmh or 0) / 3.6
       rd.v = rd.v + (target - rd.v) * math.min(1, dt * 3)
