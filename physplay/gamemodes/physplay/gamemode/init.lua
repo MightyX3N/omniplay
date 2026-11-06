@@ -11,6 +11,7 @@ local route_cv = CreateConVar("physplay_route", "rolling-hills", FCVAR_ARCHIVE +
 local SIM_DT, SEND_DT, GRADE_DT = 0.05, 0.1, 0.25
 local KEY_WATTS, KEY_WATTS_HARD = 200, 350
 local BIKE_FOLLOW_S = 0.6 -- how quickly the rider eases to each new bike reading
+local COAST_BRAKE = 3.5   -- m/s per second when you stop pedalling on the flat (30 km/h to 0 in about 2.5 s)
 
 PP.riders = PP.riders or {}
 local function route() return PP.route end
@@ -67,11 +68,25 @@ local function sim(dt)
     else rd.mode = PP.MODE.KEYS end
 
     if rd.mode == PP.MODE.BIKE and data.speed_kmh then
-      -- follow the bike's own speed directly (no physics delay on top of the console's):
-      -- hills reach you as resistance on the trainer, which slows the flywheel itself
-      local target = data.speed_kmh / 3.6
-      if (data.cadence or 0) < 1 and (data.power or 0) < 1 and target < 1 then target = 0 end
-      rd.v = rd.v + (target - rd.v) * math.min(1, dt / BIKE_FOLLOW_S)
+      -- follow the bike's own speed, but don't wait for its flywheel to spin down when you stop:
+      -- the console's power and cadence drop first, and a falling speed with falling power means
+      -- you stopped pedalling. Then the rider coasts (and rolls on downhill).
+      local reading = data.speed_kmh .. ":" .. tostring(data.cadence) .. ":" .. tostring(data.power)
+      if reading ~= rd.reading then
+        rd.reading = reading
+        rd.prev_speed, rd.prev_power = rd.cur_speed, rd.cur_power
+        rd.cur_speed, rd.cur_power = data.speed_kmh, data.power or 0
+      end
+      local falling = rd.prev_speed and rd.cur_speed < rd.prev_speed - 1.5 and rd.cur_power < (rd.prev_power or 0) * 0.6
+      local coasting = (data.cadence or 0) < 5 or (data.power or 0) < 5 or falling
+      rd.coasting = coasting
+      if coasting then
+        local kg = math.Clamp(ply:GetInfoNum("physplay_weight", 75), 30, 200)
+        rd.v = PP.Step(rd.v, 0, grade, kg, 1, dt)
+        if grade > -2 then rd.v = math.max(0, rd.v - COAST_BRAKE * dt) end
+      else
+        rd.v = rd.v + (data.speed_kmh / 3.6 - rd.v) * math.min(1, dt / BIKE_FOLLOW_S)
+      end
       rd.watts, rd.cadence = data.power or 0, data.cadence or 0
     elseif rd.mode == PP.MODE.RUN then
       -- runners move at their real belt / footpod speed

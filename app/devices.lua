@@ -169,6 +169,17 @@ local function handle(which_char, b)
       M.last_hex = table.concat(hex, " ")
       local d = kind == "ftms_bike" and ftms.indoor_bike(b) or ftms.treadmill(b)
       for k, v in pairs(d) do m[k] = v end
+      -- trace of every new reading, so the timing of a real stop / start can be checked
+      local key = tostring(d.speed_kmh) .. " " .. tostring(d.cadence) .. " " .. tostring(d.power)
+      if key ~= M.trace_key then
+        M.trace_key = key
+        if M.trace == nil then
+          local ok, store = pcall(require, "store")
+          M.trace = ok and io.open(store.exe_dir() .. "/device-trace.txt", "w") or false
+          if M.trace then M.trace:write("seconds speed_kmh cadence power\n") end
+        end
+        if M.trace then M.trace:write(string.format("%.2f %s\n", now(), key)) M.trace:flush() end
+      end
       if kind == "ftms_bike" then
         m.moving = (m.cadence or 0) > 5 or (m.power or 0) > 0
       else

@@ -26,11 +26,13 @@ assert(gmax > 1 and gmax < 8)
 -- state messages go out
 local last = STUB.sent[#STUB.sent]
 assert(last.name == "physplay_state" and last[1] == 2, "state broadcast")
--- the bike's reading drops to 0: the rider follows within about a second
-bike.OmniPlayData = function() return { kind = "bike", power = 0, cadence = 0, speed_kmh = 0 } end
-for _ = 1, 20 do now = now + 0.05 STUB.hooks.Think.PhysPlaySim() end
-print(string.format("1 s after the bike reads 0: %.1f km/h", rb.v * 3.6))
-assert(rb.v * 3.6 < 6, "should slow down quickly")
+-- you stop pedalling: the console shows 0 W but its flywheel still says 27 km/h
+PP.route = PP.routes["riverside-flats"] -- flat
+rb.d = 1000
+bike.OmniPlayData = function() return { kind = "bike", power = 0, cadence = 0, speed_kmh = 27 } end
+for _ = 1, 40 do now = now + 0.05 STUB.hooks.Think.PhysPlaySim() end
+print(string.format("2 s after power drops to 0 (flywheel still 27 km/h): %.1f km/h", rb.v * 3.6))
+assert(rb.v * 3.6 < 8, "should stop without waiting for the flywheel")
 -- lane change
 bike.keys[IN_MOVERIGHT] = true
 local l0 = rb.lane
