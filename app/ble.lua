@@ -18,6 +18,8 @@ ffi.cdef [[
   int  sb_explore(const char *addr_hex, int listen_ms);
   int  sb_explore_state(void);
   int  sb_explore_text(char *out, int outlen);
+  int  sb_tls_start(const char *dir, int listen_port, int target_port);
+  const char *sb_tls_status(void);
 ]]
 
 local M = {}

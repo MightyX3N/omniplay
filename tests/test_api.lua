@@ -100,6 +100,24 @@ assert(cam and cam.moving and cam.cadence == 84, "camera reading should arrive")
 assert(api.game_name() == "PhysPlay", "the camera page must not count as a game")
 cw:close()
 
+-- phone page through the HTTPS front door: camera readings only, and only with the pairing code
+api.token = "pair123"
+local function phone(msg)
+  local pc = connect("https://192.168.1.23:21892")
+  local rr = recv_all(pc)
+  assert(rr:find("101 Switching Protocols"), "phone origin should be allowed")
+  pc:send(masked(msg)) tick(0.3) pc:close() tick(0.2)
+end
+api.camera = nil
+phone('{"k":"wrong","camera":{"moving":true,"cadence":70,"fps":30}}')
+assert(not api.camera_live(), "a wrong pairing code must be ignored")
+phone('{"k":"pair123","game":"Evil","grade":20,"camera":{"moving":true,"cadence":70,"fps":30}}')
+assert(api.camera_live() and api.camera_live().cadence == 70, "paired phone reading should arrive")
+assert(api.game_name() ~= "Evil" and api.grade_target ~= 20, "a phone may never act as a game")
+-- QR code for the phone address
+local ok, q = require("qrencode").qrcode("https://192.168.1.23:21892/camera?k=pair123")
+assert(ok and #q >= 25, "QR code should encode the address")
+
 -- game leaves: grade ramps back to flat, keys come back
 c:close()
 tick(3)

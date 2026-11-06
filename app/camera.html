@@ -26,6 +26,7 @@
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--muted); margin-right:6px; }
   .ok { background:var(--accent); } .bad { background:var(--warn); }
   p.help { color:var(--muted); font-size:13px; margin:6px 0 0; }
+  @media (max-width: 820px) { main { grid-template-columns: minmax(0,1fr); padding:12px; } header span { display:none; } }
 </style>
 </head>
 <body>
@@ -33,7 +34,7 @@
 <main>
   <div>
     <div class="stage"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div>
-    <p class="help">Video never leaves this PC: it's analysed here and only the rhythm goes to OmniPlay. Keep this window open (it can be behind the game, but don't minimise it).</p>
+    <p class="help" id="note">Video never leaves this device: it's analysed here and only the rhythm goes to OmniPlay. Keep this page open (on a PC it can be behind the game, but don't minimise it; on a phone keep the screen on).</p>
   </div>
   <div>
     <div class="panel">
@@ -58,6 +59,8 @@
 const $ = (id) => document.getElementById(id);
 const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
 const work = document.createElement("canvas"), wctx = work.getContext("2d", { willReadFrequently: true });
+const KEY = new URLSearchParams(location.search).get("k") || "";
+const PHONE = location.protocol === "https:";
 const store = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem("op_" + k)); localStorage.setItem("op_" + k, JSON.stringify(v)); } catch (e) { return null; } };
 
 let box = store("box") || { x: 0.25, y: 0.55, w: 0.5, h: 0.4 };   // fractions of the frame
@@ -84,7 +87,10 @@ overlay.onpointerup = () => { drag = null; if (box.w < 0.05 || box.h < 0.05) box
 let stream = null;
 async function startCamera(deviceId) {
   if (stream) stream.getTracks().forEach((t) => t.stop());
-  stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId }, frameRate: 30 } : { frameRate: 30 }, audio: false });
+  const want = deviceId ? { deviceId: { exact: deviceId }, frameRate: 30 }
+    : (PHONE ? { facingMode: "environment", frameRate: 30 } : { frameRate: 30 });
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: want, audio: false }); }
+  catch (e) { if (!deviceId) throw e; stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
   video.srcObject = stream;
   const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
   const cur = stream.getVideoTracks()[0].getSettings().deviceId;
@@ -203,7 +209,7 @@ requestAnimationFrame(draw);
 // ---------- OmniPlay link ----------
 let ws = null;
 function connect() {
-  ws = new WebSocket("ws://" + location.host);
+  ws = new WebSocket((PHONE ? "wss://" : "ws://") + location.host);
   ws.onopen = () => { $("link").textContent = "Connected to OmniPlay"; $("linkdot").className = "dot ok"; };
   ws.onclose = () => { $("link").textContent = "Not connected. Is OmniPlay running?"; $("linkdot").className = "dot bad"; setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
@@ -211,8 +217,9 @@ function connect() {
   };
 }
 connect();
+if (navigator.wakeLock) { const lock = () => navigator.wakeLock.request("screen").catch(() => {}); lock(); document.addEventListener("visibilitychange", () => { if (!document.hidden) lock(); }); }
 setInterval(() => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ camera: { moving: result.moving, cadence: result.cadence, freq: result.freq, fps: Math.round(fps), activity } }));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ k: KEY, camera: { moving: result.moving, cadence: result.cadence, freq: result.freq, fps: Math.round(fps), activity } }));
 }, 100);
 
 startCamera(store("cam")).catch((err) => { $("link").textContent = "Camera blocked or missing: " + err.message; $("linkdot").className = "dot bad"; });

@@ -118,7 +118,20 @@ function love.load()
   output.init(add_log)
   session.init(add_log)
   add_log("info", "OmniPlay build " .. build)
-  api.init(add_log, store.load("api.lua", {}))
+  local api_opts = store.load("api.lua", {})
+  -- pairing code for the phone camera page (in the QR code), kept between runs
+  local phone = store.load("phone.lua", {})
+  if not phone.token then
+    local chars, t = "abcdefghjkmnpqrstuvwxyz23456789", {}
+    math.randomseed(os.time() + math.floor(love.timer.getTime() * 1e6))
+    for i = 1, 10 do local n = math.random(#chars) t[i] = chars:sub(n, n) end
+    phone.token = table.concat(t)
+    store.save("phone.lua", phone)
+  end
+  api_opts.token, api_opts.ble = phone.token, ble
+  store.mkdir()
+  api_opts.cert_dir = love.filesystem.getSaveDirectory() .. "/data"
+  api.init(add_log, api_opts)
   if not ble then return end
   devices.init(ble, add_log)
   local last = saved.last and find_saved(saved.last)
@@ -296,18 +309,66 @@ local function draw_session(x, y, w, h)
   end
 end
 
+local show_qr, qr_cache = false, {}
+local function draw_qr(url, x, y, size)
+  if qr_cache.url ~= url then
+    local ok, tab = require("qrencode").qrcode(url)
+    qr_cache = { url = url, tab = ok and tab or nil }
+  end
+  local tab = qr_cache.tab
+  if not tab then return end
+  local n = #tab
+  local mod = math.floor(size / (n + 8))
+  local total = mod * (n + 8)
+  love.graphics.setColor(1, 1, 1)
+  love.graphics.rectangle("fill", x, y, total, total)
+  love.graphics.setColor(0, 0, 0)
+  for cx = 1, n do
+    for cy = 1, n do
+      if tab[cx][cy] > 0 then love.graphics.rectangle("fill", x + (cx + 3) * mod, y + (cy + 3) * mod, mod, mod) end
+    end
+  end
+  return total
+end
+
 local function draw_devices(x, y, w, h)
-  -- camera: a page in your browser watches your feet; works alone or with a device
-  ui.rect(x, y, w, 52, C.panel)
+  -- camera: a page watches your feet (this PC's webcam, or a phone over Wi-Fi); works alone or with a device
+  local ph = show_qr and 250 or 52
+  ui.rect(x, y, w, ph, C.panel)
   local cam = api.camera_live()
   ui.text("Camera", x + 14, y + 7, C.text, "mid")
   ui.text(cam and string.format("connected  ·  %s, %d %s  ·  %d fps", cam.moving and "moving" or "still", cam.cadence,
-    cam.activity == "cycling" and "rpm" or "steps/min", cam.fps) or "Use a webcam (or a phone as webcam) pointed at your feet",
+    cam.activity == "cycling" and "rpm" or "steps/min", cam.fps) or "A webcam or your phone, pointed at your feet",
     x + 14, y + 30, cam and C.accent or C.muted, "small")
-  if ui.button(cam and "Open again" or "Open camera page", x + w - 190, y + 9, 176, 34, cam and "secondary" or "primary") then
+  if ui.button(show_qr and "Hide phone code" or "Use phone", x + w - 330, y + 9, 150, 34, show_qr and "secondary" or "primary") then
+    show_qr = not show_qr
+  end
+  if ui.button("Use this PC's webcam", x + w - 170, y + 9, 156, 34, "secondary") then
     love.system.openURL("http://127.0.0.1:" .. api.port .. "/camera")
   end
-  y = y + 64
+  if show_qr then
+    local url = api.phone_url()
+    if url then
+      local qs = draw_qr(url, x + 14, y + 56, 184) or 184
+      local tx = x + 14 + qs + 20
+      local lines = {
+        "1. Phone on the same Wi-Fi as this PC.",
+        "2. Scan the code with the phone's camera.",
+        "3. First time only: the phone warns the connection isn't private,",
+        "   because OmniPlay made its own certificate. Choose 'Show details' /",
+        "   'Advanced', then visit the website anyway.",
+        "4. Allow the camera, put the phone down pointing at your feet,",
+        "   and drag a box around them. Keep the screen on.",
+        "If Windows asks about the firewall, allow private networks.",
+      }
+      for i, l in ipairs(lines) do ui.text(l, tx, y + 54 + (i - 1) * 20, i == 8 and C.muted or C.soft, "small") end
+      ui.text(url, tx, y + 222, C.muted, "small")
+    else
+      ui.text("The phone camera isn't available: " .. (api.lan_ip and api.phone_status or "this PC has no local network address"),
+        x + 14, y + 70, C.warn, "small", w - 28)
+    end
+  end
+  y = y + ph + 12
   ui.text("Your devices", x, y, C.muted, "small")
   y = y + 20
   if #saved.devices == 0 then ui.text("None yet. Add one from the list below.", x, y + 4, C.soft); y = y + 34 end

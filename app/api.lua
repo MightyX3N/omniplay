@@ -9,7 +9,7 @@ local bit = require("bit")
 local json = require("json")
 
 local M = {
-  port = 21890, games = {}, gmod_dir = nil, listening = false, status = "off",
+  port = 21890, phone_port = 21892, token = nil, lan_ip = nil, phone_status = "off", games = {}, gmod_dir = nil, listening = false, status = "off",
   grade_target = nil, grade = nil, log = function() end,
 }
 M.now = function() return love.timer.getTime() end
@@ -165,6 +165,11 @@ function M.active()
   end
   return best
 end
+function M.phone_url()
+  if not M.lan_ip or M.phone_status ~= "ready" then return nil end
+  return string.format("https://%s:%d/camera?k=%s", M.lan_ip, M.phone_port, M.token or "")
+end
+
 -- the camera's latest reading, or nil when its page isn't sending
 function M.camera_live()
   if M.camera and M.now() - M.camera.t < 1.5 then return M.camera end
@@ -212,13 +217,15 @@ local function handle_http(c)
   local own = "http://127.0.0.1:" .. M.port
   local own2 = "http://localhost:" .. M.port
   local o = h.origin and h.origin:lower()
-  if o and not (o:match("^asset://garrysmod") or o == own or o == own2) then
+  local phone = o and o:match("^https://[^/]+:" .. M.phone_port .. "$") ~= nil
+  if o and not (o:match("^asset://garrysmod") or o == own or o == own2 or phone) then
     M.log("err", "refused a connection from a web page (" .. h.origin:sub(1, 80) .. ")")
     csend(c, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     c.close_after = true
     return
   end
   c.origin = h.origin
+  c.phone = phone -- came through the HTTPS front door: may only send camera readings, with the pairing code
   if method == "GET" and (h.upgrade or ""):lower() == "websocket" and h["sec-websocket-key"] then
     csend(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
       .. accept_key(h["sec-websocket-key"]) .. "\r\n\r\n")
@@ -230,7 +237,8 @@ local function handle_http(c)
   end
   local body, code, ctype = nil, "404 Not Found", "application/json"
   if method == "GET" and path == "/state" then body, code = M.last_state or "{}", "200 OK" end
-  if method == "GET" and (path == "/camera" or path == "/camera/") and M.camera_page then
+  local route = path and path:match("^[^?]*")
+  if method == "GET" and (route == "/camera" or route == "/camera/") and M.camera_page then
     body, code, ctype = M.camera_page, "200 OK", "text/html; charset=utf-8"
   end
   body = body or ""
@@ -274,7 +282,9 @@ local function handle_ws(c)
       if fin then
         local msg = json.decode(c.frag)
         c.frag = nil
-        if msg then apply(game(c.id, "websocket"), msg) end
+        if msg and c.phone then
+          if type(msg.camera) == "table" and msg.k == M.token then apply(game(c.id, "websocket"), { camera = msg.camera }) end
+        elseif msg then apply(game(c.id, "websocket"), msg) end
       end
     end
   end
@@ -349,6 +359,15 @@ function M.init(log_fn, opts)
   local ok, s = pcall(require, "socket")
   if not ok then M.status = "no socket library"; return end
   socket = s
+  M.token = opts.token
+  -- this PC's address on the local network (no packet is sent; it just asks the OS which route it would use)
+  pcall(function()
+    local u = socket.udp()
+    u:setpeername("192.168.255.255", 9)
+    local ip = u:getsockname()
+    u:close()
+    if ip and ip ~= "0.0.0.0" then M.lan_ip = ip end
+  end)
   local srv, err = socket.bind("127.0.0.1", M.port)
   if not srv then
     M.status = "port " .. M.port .. " busy (" .. tostring(err) .. ")"
@@ -357,6 +376,16 @@ function M.init(log_fn, opts)
   end
   srv:settimeout(0)
   server, M.listening, M.status = srv, true, "ws://127.0.0.1:" .. M.port
+  -- HTTPS front door for phones (camera pages need HTTPS); lives in the helper DLL
+  local has_tls = opts.ble and pcall(function() return opts.ble.sb_tls_start end) and opts.ble.sb_tls_start
+  if has_tls and opts.cert_dir then
+    if opts.ble.sb_tls_start(opts.cert_dir, M.phone_port, M.port) == 0 then
+      M.phone_status = "ready"
+    else
+      M.phone_status = require("ffi").string(opts.ble.sb_tls_status())
+      M.log("err", "phone camera: " .. M.phone_status)
+    end
+  end
 end
 
 local seq, tick_t = 0, 0

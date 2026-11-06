@@ -6,10 +6,23 @@ cd "$(dirname "$0")"
 LOVE_VER=11.5
 LOVE_DIR=build/love-$LOVE_VER-win64
 
-# 1. Bluetooth helper DLL
+# 1. Helper DLL: Bluetooth (WinRT) + the HTTPS front door for phone cameras (mbedTLS, Apache-2.0)
 mkdir -p build
-x86_64-w64-mingw32-gcc -shared -O2 -Wall -o build/omniplay_ble.dll native/omniplay_ble.c \
-  -lruntimeobject -lole32 -static-libgcc -static
+MBEDTLS_VER=v3.6.2
+MBEDTLS=build/mbedtls-$MBEDTLS_VER
+if [ ! -d "$MBEDTLS" ]; then
+  git clone -q --depth 1 --branch "$MBEDTLS_VER" https://github.com/Mbed-TLS/mbedtls.git "$MBEDTLS"
+fi
+if [ ! -f "$MBEDTLS/libmbed-win.a" ]; then
+  mkdir -p build/mbed-obj
+  for f in "$MBEDTLS"/library/*.c; do
+    x86_64-w64-mingw32-gcc -O2 -w -I"$MBEDTLS/include" -c "$f" -o "build/mbed-obj/$(basename "$f" .c).o"
+  done
+  x86_64-w64-mingw32-ar rcs "$MBEDTLS/libmbed-win.a" build/mbed-obj/*.o
+fi
+x86_64-w64-mingw32-gcc -shared -O2 -Wall -o build/omniplay_ble.dll native/omniplay_ble.c native/omniplay_tls.c \
+  -I"$MBEDTLS/include" "$MBEDTLS/libmbed-win.a" \
+  -lruntimeobject -lole32 -lws2_32 -lbcrypt -static-libgcc -static
 
 # 2. LÖVE runtime (downloaded once)
 if [ ! -d "$LOVE_DIR" ]; then
@@ -26,6 +39,7 @@ cat "$LOVE_DIR/love.exe" build/game.love > dist/OmniPlay/OmniPlay.exe
 cp "$LOVE_DIR"/*.dll dist/OmniPlay/
 cp "$LOVE_DIR/license.txt" dist/OmniPlay/LOVE-license.txt
 cp build/omniplay_ble.dll LICENSE dist/OmniPlay/
+cp "$MBEDTLS/LICENSE" dist/OmniPlay/mbedTLS-LICENSE.txt
 mkdir -p dist/OmniPlay/gmod-addon && cp -r gmod/omniplay_bridge dist/OmniPlay/gmod-addon/ && cp docs/API.md dist/OmniPlay/
 (cd dist && zip -q -9 -r OmniPlay.zip OmniPlay)
 echo "built dist/OmniPlay.zip"
