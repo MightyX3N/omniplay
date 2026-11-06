@@ -163,6 +163,10 @@ local function handle(which_char, b)
   else -- FTMS
     if which_char == 0 then
       last_packet = now()
+      M.pkts = (M.pkts or 0) + 1
+      local hex = {}
+      for i = 1, #b do hex[i] = string.format("%02X", b[i]) end
+      M.last_hex = table.concat(hex, " ")
       local d = kind == "ftms_bike" and ftms.indoor_bike(b) or ftms.treadmill(b)
       for k, v in pairs(d) do m[k] = v end
       if kind == "ftms_bike" then

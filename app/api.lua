@@ -376,12 +376,20 @@ function M.update(dt, m, dev, devstate, ctl, extra)
     M.last_key, M.last_key_t = key, M.now()
   end
   M.report_t = (M.report_t or 0) + dt
+  M.frames = (M.frames or 0) + 1
   if M.report_t >= 15 and (#rtt > 0 or #data_gaps > 2) then
     M.report_t = 0
     local function stat(t) local s, mx = 0, 0 for _, v in ipairs(t) do s = s + v; mx = math.max(mx, v) end return s / #t * 1000, mx * 1000 end
     local parts = {}
     if #rtt > 0 then local a, mx = stat(rtt) parts[#parts + 1] = string.format("game bridge round trip avg %d ms, max %d ms", a, mx) end
     if #data_gaps > 2 then local a, mx = stat(data_gaps) parts[#parts + 1] = string.format("device sends new numbers every %d ms (max %d)", a, mx) end
+    local dv = package.loaded.devices
+    if dv and dv.pkts then
+      parts[#parts + 1] = string.format("%d data packets in 15 s, last: %s", dv.pkts, dv.last_hex or "-")
+      dv.pkts = 0
+    end
+    parts[#parts + 1] = string.format("OmniPlay running at %d fps", M.frames / 15)
+    M.frames = 0
     M.log("info", "latency: " .. table.concat(parts, "; "))
     for i = #rtt, 1, -1 do rtt[i] = nil end
     for i = #data_gaps, 1, -1 do data_gaps[i] = nil end
