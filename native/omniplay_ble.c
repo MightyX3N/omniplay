@@ -107,6 +107,7 @@ static HANDLE g_thread;
 static GUID g_svc, g_nchar[MAXNOTIFY], g_wchar;
 static int g_nnotify, g_has_w;
 static UINT64 g_addr;
+static INT32 g_cache_mode = 1; /* 1 = Uncached (first connect), 0 = Cached (fast reconnect) */
 
 static BOOL CALLBACK init_once(PINIT_ONCE o, PVOID p, PVOID *c) { (void)o; (void)p; (void)c; InitializeCriticalSection(&g_lock); return TRUE; }
 static void init(void) { InitOnceExecuteOnce(&g_once, init_once, NULL, NULL); }
@@ -316,7 +317,7 @@ static HRESULT get_char(void *svc3, const GUID *uuid, void **out)
 {
     void *op = NULL, *res = NULL, *vec = NULL; INT32 st = -1; UINT32 n = 0;
     *out = NULL;
-    HRESULT hr = FN(svc3, S3_CHARS_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(svc3, *uuid, 1 /* Uncached */, &op);
+    HRESULT hr = FN(svc3, S3_CHARS_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(svc3, *uuid, g_cache_mode, &op);
     if (SUCCEEDED(hr)) hr = op_ptr(op, 10000, &res);
     if (FAILED(hr) || !res) return FAILED(hr) ? hr : E_FAIL;
     FN(res, CR_STATUS, GETI32_T)(res, &st);
@@ -356,7 +357,7 @@ static DWORD WINAPI connect_thread(LPVOID p)
         char msg[64]; snprintf(msg, sizeof msg, "Connecting and reading services (try %d of 3)...", attempt);
         set_status(msg);
         op = NULL; res = NULL; st = -1;
-        hr = FN(dev3, D3_SERVICES_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(dev3, g_svc, 1 /* Uncached */, &op);
+        hr = FN(dev3, D3_SERVICES_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(dev3, g_svc, attempt == 1 ? g_cache_mode : 1, &op);
         if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &res);
         if (SUCCEEDED(hr) && res) {
             FN(res, SR_STATUS, GETI32_T)(res, &st);
@@ -508,6 +509,9 @@ API int sb_read_ex(unsigned char *buf, int maxlen, int *which)
 }
 
 API int sb_dropped(void) { return g_dropped; }
+
+/* 0 = use Windows' cached services (fast reconnect), 1 = always read from the device. */
+API void sb_set_cache_mode(int uncached) { g_cache_mode = uncached ? 1 : 0; }
 
 /* ---------- device explorer (read-only) ----------
  * Lists every service and characteristic of a device, reads the readable ones,

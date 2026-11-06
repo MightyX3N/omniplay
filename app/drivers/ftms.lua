@@ -67,6 +67,28 @@ function M.indoor_bike(b)
   return d
 end
 
+-- Treadmill Data (2ACD).
+function M.treadmill(b)
+  local flags, i, d = u16(b, 1), 3, {}
+  local function has(n) return band(flags, lshift(1, n)) ~= 0 end
+  if not has(0) then d.speed_kmh = u16(b, i) / 100; i = i + 2 end
+  if has(1) then i = i + 2 end
+  if has(2) then d.distance_m = u16(b, i) + (b[i + 2] or 0) * 65536; i = i + 3 end
+  if has(3) then d.incline = s16(b, i) / 10; i = i + 4 end
+  if has(4) then i = i + 4 end
+  if has(5) then i = i + 1 end
+  if has(6) then i = i + 1 end
+  if has(7) then d.kcal = u16(b, i); i = i + 5 end
+  if has(8) then d.hr = b[i]; i = i + 1 end
+  if has(9) then i = i + 1 end
+  if has(10) then d.seconds = u16(b, i); i = i + 2 end
+  return d
+end
+
+-- Treadmill targets: speed in km/h (0.01 resolution), incline in percent (0.1).
+function M.target_speed(kmh) local lo, hi = le16(math.floor(kmh * 100 + 0.5)); return { 0x02, lo, hi } end
+function M.target_incline(pct) local lo, hi = le16(math.floor(pct * 10 + 0.5)); return { 0x03, lo, hi } end
+
 function M.bike_text(d)
   local t = {}
   if d.speed_kmh then t[#t + 1] = string.format("speed %.2f km/h", d.speed_kmh) end
