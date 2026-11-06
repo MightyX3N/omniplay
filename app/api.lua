@@ -363,7 +363,7 @@ function M.init(log_fn, opts)
   -- this PC's address on the local network (no packet is sent; it just asks the OS which route it would use)
   pcall(function()
     local u = socket.udp()
-    u:setpeername("192.168.255.255", 9)
+    u:setpeername("8.8.8.8", 53)
     local ip = u:getsockname()
     u:close()
     if ip and ip ~= "0.0.0.0" then M.lan_ip = ip end
@@ -381,6 +381,12 @@ function M.init(log_fn, opts)
   if has_tls and opts.cert_dir then
     if opts.ble.sb_tls_start(opts.cert_dir, M.phone_port, M.port) == 0 then
       M.phone_status = "ready"
+      M.tls = opts.ble
+      M.log("info", "phone camera address: " .. (M.phone_url() or ("no local network address" .. (M.lan_ip and "" or " found"))))
+      pcall(function()
+        local _, info = socket.dns.toip(socket.dns.gethostname())
+        if info and info.ip then M.log("info", "this PC's addresses: " .. table.concat(info.ip, ", ")) end
+      end)
     else
       M.phone_status = require("ffi").string(opts.ble.sb_tls_status())
       M.log("err", "phone camera: " .. M.phone_status)
@@ -424,6 +430,14 @@ function M.update(dt, m, dev, devstate, ctl, extra)
   if key ~= M.last_key then
     if M.last_key_t then data_gaps[#data_gaps + 1] = M.now() - M.last_key_t end
     M.last_key, M.last_key_t = key, M.now()
+  end
+  if M.tls then
+    M.tls_t = (M.tls_t or 0) + dt
+    if M.tls_t > 2 then
+      M.tls_t = 0
+      local st = require("ffi").string(M.tls.sb_tls_status())
+      if st ~= M.tls_last then M.tls_last = st; M.log("info", "phone camera: " .. st) end
+    end
   end
   M.report_t = (M.report_t or 0) + dt
   M.frames = (M.frames or 0) + 1

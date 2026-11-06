@@ -54,6 +54,13 @@ static conn_t conns[MAXC];
 static int g_target_port = 21890, g_running = 0;
 static char g_status[256] = "off";
 static volatile int g_stop = 0;
+static int g_port = 0, g_accepted = 0, g_served = 0, g_failed = 0, g_last_err = 0;
+static void update_status(void)
+{
+  char e[96] = "";
+  if (g_last_err) mbedtls_strerror(g_last_err, e, sizeof e);
+  snprintf(g_status, sizeof g_status, "listening on port %d; %d connections, %d secure, %d failed%s%s", g_port, g_accepted, g_served, g_failed, g_last_err ? ", last: " : "", e);
+}
 
 static void status(const char *s, int err)
 {
@@ -133,8 +140,9 @@ static int pump(conn_t *c)
   if (c->shaking) {
     r = mbedtls_ssl_handshake(&c->ssl);
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return 0;
-    if (r) return -1; /* usually the phone hasn't trusted the certificate yet */
+    if (r) { g_failed++; g_last_err = r; update_status(); return -1; } /* usually the phone hasn't trusted the certificate yet */
     c->shaking = 0;
+    g_served++; update_status();
     char port[16];
     snprintf(port, sizeof port, "%d", g_target_port);
     if (mbedtls_net_connect(&c->plain_fd, "127.0.0.1", port, MBEDTLS_NET_PROTO_TCP)) return -1;
@@ -183,6 +191,7 @@ static void loop(void)
         conn_t *c = &conns[slot];
         memset(c, 0, sizeof *c);
         c->used = 1; c->shaking = 1;
+        g_accepted++; update_status();
         c->tls_fd = fd;
         mbedtls_net_init(&c->plain_fd);
         mbedtls_net_set_nonblock(&c->tls_fd);
@@ -233,7 +242,7 @@ API int sb_tls_start(const char *dir, int listen_port, int target_port)
   if (r) { status("certificate rejected", r); return -1; }
   char port[16];
   snprintf(port, sizeof port, "%d", listen_port);
-  r = mbedtls_net_bind(&listener, NULL, port, MBEDTLS_NET_PROTO_TCP);
+  r = mbedtls_net_bind(&listener, "0.0.0.0", port, MBEDTLS_NET_PROTO_TCP); /* IPv4: phones on Wi-Fi */
   if (r) { status("port busy", r); return -1; }
   mbedtls_net_set_nonblock(&listener);
   g_running = 1;
@@ -245,7 +254,8 @@ API int sb_tls_start(const char *dir, int listen_port, int target_port)
   pthread_create(&t, NULL, thread_main, NULL);
   pthread_detach(t);
 #endif
-  snprintf(g_status, sizeof g_status, "listening on port %d", listen_port);
+  g_port = listen_port;
+  update_status();
   return 0;
 }
 
