@@ -188,7 +188,7 @@ function M.set_grade(pct)
   pct = math.max(-10, math.min(20, pct))
   M.m.grade = pct
   if last_sent_grade and math.abs(pct - last_sent_grade) < 0.1 and grade_t < 2 then return true end
-  if grade_t < 0.5 and last_sent_grade then return true end -- at most twice a second
+  if grade_t < 0.25 and last_sent_grade then return true end -- at most four times a second
   write(ftms.simulation(pct))
   last_sent_grade, grade_t = pct, 0
   return true

@@ -294,13 +294,22 @@ end
 
 -- ---------- file bridge ----------
 local file_t, last_beat = 0, nil
-local function file_bridge(state_json)
+-- latency measurement: when each state was written, and when the game says it saw it
+local sent_at, rtt, data_gaps = {}, {}, {}
+M.stats = { rtt = rtt, gaps = data_gaps }
+local function file_bridge(state_json, seq_now)
   local dir = M.gmod_dir and (M.gmod_dir .. "/omniplay")
   if not dir then return end
   if not M.dir_made then mkdir(M.gmod_dir); mkdir(dir); M.dir_made = true end
   write_atomic(dir .. "/live.txt", state_json)
+  sent_at[seq_now] = M.now()
+  sent_at[seq_now - 400] = nil
   local raw = read_file(dir .. "/cmd.txt")
   local msg = raw and json.decode(raw)
+  if msg and type(msg.ack) == "number" and msg.ack ~= M.last_ack then
+    M.last_ack = msg.ack
+    if sent_at[msg.ack] then rtt[#rtt + 1] = M.now() - sent_at[msg.ack] end
+  end
   if msg and msg.beat ~= nil and msg.beat ~= last_beat then
     local first = last_beat == nil
     last_beat = msg.beat
@@ -349,7 +358,7 @@ function M.update(dt, m, dev, devstate, ctl, extra)
   if target or (M.grade and M.grade ~= 0) then
     local want = target or 0
     local cur = M.grade or 0
-    local step = 4 * dt
+    local step = 6 * dt
     cur = want > cur and math.min(want, cur + step) or math.max(want, cur - step)
     M.grade = cur
     if ctl and ctl.set_grade then ctl.set_grade(cur) end
@@ -359,11 +368,29 @@ function M.update(dt, m, dev, devstate, ctl, extra)
     if ctl.set_belt_speed(a.belt) then M.belt_sent = a.belt end
   end
 
+  -- how often the device itself sends new numbers
+  m = m or {}
+  local key = tostring(m.power) .. ":" .. tostring(m.cadence) .. ":" .. tostring(m.speed_kmh)
+  if key ~= M.last_key then
+    if M.last_key_t then data_gaps[#data_gaps + 1] = M.now() - M.last_key_t end
+    M.last_key, M.last_key_t = key, M.now()
+  end
+  M.report_t = (M.report_t or 0) + dt
+  if M.report_t >= 15 and (#rtt > 0 or #data_gaps > 2) then
+    M.report_t = 0
+    local function stat(t) local s, mx = 0, 0 for _, v in ipairs(t) do s = s + v; mx = math.max(mx, v) end return s / #t * 1000, mx * 1000 end
+    local parts = {}
+    if #rtt > 0 then local a, mx = stat(rtt) parts[#parts + 1] = string.format("game bridge round trip avg %d ms, max %d ms", a, mx) end
+    if #data_gaps > 2 then local a, mx = stat(data_gaps) parts[#parts + 1] = string.format("device sends new numbers every %d ms (max %d)", a, mx) end
+    M.log("info", "latency: " .. table.concat(parts, "; "))
+    for i = #rtt, 1, -1 do rtt[i] = nil end
+    for i = #data_gaps, 1, -1 do data_gaps[i] = nil end
+  end
+
   tick_t = tick_t + dt
-  if tick_t < 0.1 then return end
+  if tick_t < 0.05 then return end
   tick_t = 0
   seq = seq + 1
-  m = m or {}
   local st = {
     type = "state", v = 1, seq = seq, app = "OmniPlay",
     connected = devstate == "connected",
@@ -376,7 +403,7 @@ function M.update(dt, m, dev, devstate, ctl, extra)
   M.last_state = json.encode(st)
   local frame = ws_frame(1, M.last_state)
   for _, c in ipairs(clients) do if c.ws and not c.dead then csend(c, frame) end end
-  file_bridge(M.last_state)
+  file_bridge(M.last_state, seq)
 end
 
 function M.count()

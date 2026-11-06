@@ -8,7 +8,7 @@ util.AddNetworkString("physplay_route")
 util.AddNetworkString("physplay_state")
 
 local route_cv = CreateConVar("physplay_route", "rolling-hills", FCVAR_ARCHIVE + FCVAR_NOTIFY, "PhysPlay route id")
-local SIM_DT, SEND_DT, GRADE_DT = 0.05, 0.1, 0.5
+local SIM_DT, SEND_DT, GRADE_DT = 0.05, 0.1, 0.25
 local KEY_WATTS, KEY_WATTS_HARD = 200, 350
 
 PP.riders = PP.riders or {}

@@ -14,7 +14,7 @@
 --   OmniPlay.SetInfo(text)          -> a status line written to OmniPlay's log (for debugging)
 --   hook "OmniPlay_Data" (data)     -> new data arrived (about 10 times a second)
 -- SERVER
---   ply:OmniPlayData()              -> that player's last data (sent by their client 4x a second; trust it like any client input)
+--   ply:OmniPlayData()              -> that player's last data (sent by their client up to 10x a second; trust it like any client input)
 --   ply:OmniPlaySetGrade(pct)       -> set that player's hill
 --   ply:OmniPlayTakeInput(bool)
 --   hook "OmniPlay_PlayerData" (ply, data)
@@ -43,7 +43,7 @@ if SERVER then
   net.Receive("omniplay_data", function(_, ply)
     local now = CurTime()
     if ply.OmniPlayNext and now < ply.OmniPlayNext then return end
-    ply.OmniPlayNext = now + 0.15
+    ply.OmniPlayNext = now + 0.07
     if not net.ReadBool() then
       ply.OmniPlay = nil
       hook.Run("OmniPlay_PlayerData", ply, nil)
@@ -71,39 +71,64 @@ file.CreateDir("omniplay")
 
 function OmniPlay.IsConnected() return data ~= nil and RealTime() - last_change < 2 end
 function OmniPlay.Get() if OmniPlay.IsConnected() then return data end end
-function OmniPlay.SetGame(name) want.game, want.used = tostring(name), true end
-function OmniPlay.SetGrade(pct) want.grade, want.used = pct and math.Clamp(tonumber(pct) or 0, -10, 20) or nil, true end
-function OmniPlay.SetBeltSpeed(kmh) want.belt_speed, want.used = tonumber(kmh), true end
-function OmniPlay.TakeInput(on) want.take_input, want.used = on and true or false, true end
+function OmniPlay.SetGame(name) want.game, want.used, want.dirty = tostring(name), true, true end
+function OmniPlay.SetGrade(pct)
+  local g = pct and math.Clamp(tonumber(pct) or 0, -10, 20) or nil
+  if g ~= want.grade then want.dirty = true end
+  want.grade, want.used = g, true
+end
+function OmniPlay.SetBeltSpeed(kmh) want.belt_speed, want.used, want.dirty = tonumber(kmh), true, true end
+function OmniPlay.TakeInput(on) want.take_input, want.used, want.dirty = on and true or false, true, true end
 function OmniPlay.SetInfo(text) want.info, want.used = text and tostring(text):sub(1, 300) or nil, true end -- shown in OmniPlay's log
 
-timer.Create("OmniPlay_Read", 0.1, 0, function()
-  local raw = file.Read("omniplay/live.txt", "DATA")
-  if not raw then return end
-  local t = util.JSONToTable(raw)
-  if not t or t.seq == last_seq then return end
-  last_seq, last_change = t.seq, RealTime()
-  if t.closed then data = nil return end
-  data = t
-  hook.Run("OmniPlay_Data", t)
-end)
-
--- heartbeat + requests, only once something actually uses the API
-timer.Create("OmniPlay_Write", 0.5, 0, function()
-  if not want.used then return end
+-- read OmniPlay's file often (it's tiny and in the OS cache) and answer quickly, so hills
+-- and numbers don't wait on slow timers
+local last_write, ack_dirty = 0, false
+local function write_cmd()
   beat = beat + 1
+  last_write = RealTime()
+  ack_dirty = false
   file.Write("omniplay/cmd.txt", util.TableToJSON({
-    beat = beat, game = want.game or "Garry's Mod",
+    beat = beat, game = want.game or "Garry's Mod", ack = last_seq,
     grade = want.grade == nil and false or want.grade,
     belt_speed = want.belt_speed, take_input = want.take_input == true, info = want.info,
   }))
+end
+OmniPlay._write = write_cmd
+
+timer.Create("OmniPlay_Read", 0.02, 0, function()
+  local raw = file.Read("omniplay/live.txt", "DATA")
+  if raw then
+    local t = util.JSONToTable(raw)
+    if t and t.seq ~= last_seq then
+      last_seq, last_change = t.seq, RealTime()
+      ack_dirty = true
+      if t.closed then data = nil else
+        data = t
+        OmniPlay.fresh = true
+        hook.Run("OmniPlay_Data", t)
+      end
+    end
+  end
+  if want.used then
+    local since = RealTime() - last_write
+    if (want.dirty and since >= 0.05) or (ack_dirty and since >= 0.1) or since >= 0.5 then
+      want.dirty = false
+      write_cmd()
+    end
+  end
 end)
 
 -- send our data to the server for multiplayer gamemodes
 local was_connected = false
-timer.Create("OmniPlay_Send", 0.25, 0, function()
+local last_send = 0
+timer.Create("OmniPlay_Send", 0.02, 0, function()
   local d = OmniPlay.Get()
   if not d and not was_connected then return end
+  local now = RealTime()
+  if d and not OmniPlay.fresh and now - last_send < 0.5 then return end
+  if now - last_send < 0.1 then return end
+  OmniPlay.fresh, last_send = false, now
   if not IsValid(LocalPlayer()) then return end
   was_connected = d ~= nil
   net.Start("omniplay_data")

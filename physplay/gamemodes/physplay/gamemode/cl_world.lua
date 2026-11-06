@@ -193,6 +193,10 @@ local function prepare_terrain()
     end
     add_road_point(p[#p - 2], p[#p - 1], p[#p])
   end
+  for _, id in ipairs(PP.route_ids) do
+    local rt = PP.routes[id]
+    for d = 0, rt.length, 6 do local x, y, z = rt:At(d) add_road_point(x, y, z) end
+  end
   for r = 0, m.rows - 1 do
     for c = 0, m.columns - 1 do
       local i = r * m.columns + c
@@ -353,31 +357,54 @@ local function road_strip(buf, at, len, s0, s1, off_a, off_b, lift, r, g, b, ste
 end
 
 W.roads = {}
-local function build_roads()
-  local lanes = 4
+local function road_piece(at, len, s0, s1, lanes)
   local hw = lanes * PP.LANE_W / 2 + PP.SHOULDER
+  local buf, lines = {}, {}
+  road_strip(buf, at, len, s0, s1, -hw, hw, 0.12, 74, 77, 82, 4)
+  road_strip(buf, at, len, s0, s1, -hw - 1.2, -hw, 0.06, 150, 140, 112, 4) -- gravel shoulders
+  road_strip(buf, at, len, s0, s1, hw, hw + 1.2, 0.06, 150, 140, 112, 4)
+  road_strip(lines, at, len, s0, s1, -hw + 0.5, -hw + 0.68, 0.16, 236, 238, 240, 4)
+  road_strip(lines, at, len, s0, s1, hw - 0.68, hw - 0.5, 0.16, 236, 238, 240, 4)
+  for k = 1, lanes - 1 do
+    local off = -lanes * PP.LANE_W / 2 + k * PP.LANE_W
+    local w = k == lanes / 2 and 0.16 or 0.1
+    for d = math.ceil(s0 / 9) * 9, s1 - 3, 9 do
+      road_strip(lines, at, len, d, d + 3, off - w, off + w, 0.16, 236, 238, 240, 3)
+    end
+  end
+  local x, y = at((s0 + s1) / 2)
+  W.roads[#W.roads + 1] = { body = build_meshes(buf, x, y, 0), lines = build_meshes(lines, x, y, 0), cx = x, cy = y }
+end
+
+local function build_roads(route)
+  for _, rd in ipairs(W.roads) do
+    for _, m in ipairs(rd.body.meshes) do m:Destroy() end
+    for _, m in ipairs(rd.lines.meshes) do m:Destroy() end
+  end
+  W.roads = {}
+  -- the route itself, always drawn exactly where riders are
+  local rp = {}
+  for i = 1, #route.x do rp[#rp + 1] = route.x[i] rp[#rp + 1] = route.y[i] rp[#rp + 1] = route.z[i] end
+  local rat, rlen = polyline(rp)
+  for s0 = 0, rlen, 400 do road_piece(rat, rlen, s0, math.min(rlen, s0 + 400), route.lanes) end
+  -- points on the route, to skip network roads that are the same road
+  local on = {}
+  local function okey(x, y) return math.floor(x / 8) * 100003 + math.floor(y / 8) end
+  for d = 0, route.length, 3 do
+    local x, y = route:At(d)
+    for i = -1, 1 do for j = -1, 1 do on[okey(x + i * 4, y + j * 4)] = true end end
+  end
   for _, rd in ipairs(PP.map.road_list) do
     local at, len = polyline(rd.p)
-    -- split into pieces so far-away road isn't drawn
-    local piece = 400
-    for s0 = 0, len, piece do
-      local s1 = math.min(len, s0 + piece)
-      local buf, lines = {}, {}
-      road_strip(buf, at, len, s0, s1, -hw, hw, 0.12, 74, 77, 82, 4)
-      road_strip(buf, at, len, s0, s1, -hw - 1.2, -hw, 0.06, 150, 140, 112, 4) -- gravel shoulders
-      road_strip(buf, at, len, s0, s1, hw, hw + 1.2, 0.06, 150, 140, 112, 4)
-      -- edge lines and dashed lane lines
-      road_strip(lines, at, len, s0, s1, -hw + 0.5, -hw + 0.68, 0.16, 236, 238, 240, 4)
-      road_strip(lines, at, len, s0, s1, hw - 0.68, hw - 0.5, 0.16, 236, 238, 240, 4)
-      for k = 1, lanes - 1 do
-        local off = -lanes * PP.LANE_W / 2 + k * PP.LANE_W
-        local w = k == lanes / 2 and 0.16 or 0.1
-        for d = math.ceil(s0 / 9) * 9, s1 - 3, 9 do
-          road_strip(lines, at, len, d, d + 3, off - w, off + w, 0.16, 236, 238, 240, 3)
-        end
+    for s0 = 0, len, 400 do
+      local s1 = math.min(len, s0 + 400)
+      local hits, n = 0, 0
+      for s = s0, s1, 10 do
+        local x, y = at(s)
+        n = n + 1
+        if on[okey(x, y)] then hits = hits + 1 end
       end
-      local x, y, z = at((s0 + s1) / 2)
-      W.roads[#W.roads + 1] = { body = build_meshes(buf, x, y, 0), lines = build_meshes(lines, x, y, 0), cx = x, cy = y }
+      if hits < n * 0.6 then road_piece(at, len, s0, s1, 4) end
     end
   end
 end
@@ -473,15 +500,17 @@ local function build_bike()
     quad(fb, x1, y, z1 - w, x2, y, z2 - w, x2, y, z2 + w, x1, y, z1 + w, 230, 230, 230, true)
   end
   local R = 0.34
-  tube(-0.5, R, 0.02, 0.38, 0.025)       -- chainstay to bottom bracket
-  tube(0.02, 0.38, -0.12, 0.92, 0.025)   -- seat tube
-  tube(-0.5, R, -0.12, 0.92, 0.02)       -- seat stays
-  tube(0.02, 0.38, 0.42, 0.9, 0.03)      -- down tube
-  tube(-0.12, 0.9, 0.42, 0.92, 0.025)    -- top tube
-  tube(0.42, 0.92, 0.52, R, 0.022)       -- fork
-  tube(0.42, 0.92, 0.46, 1.04, 0.02)     -- stem
-  tube(-0.22, 0.98, -0.02, 0.98, 0.04)   -- saddle
-  quad(fb, 0.45, -0.22, 1.04, 0.5, -0.22, 1.04, 0.5, 0.22, 1.04, 0.45, 0.22, 1.04, 60, 60, 60, true) -- bars
+  tube(-0.5, R, 0.02, 0.38, 0.045)       -- chainstay to bottom bracket
+  tube(0.02, 0.38, -0.12, 0.92, 0.05)    -- seat tube
+  tube(-0.5, R, -0.12, 0.92, 0.035)      -- seat stays
+  tube(0.02, 0.38, 0.42, 0.9, 0.06)      -- down tube
+  tube(-0.12, 0.9, 0.42, 0.92, 0.05)     -- top tube
+  tube(0.42, 0.92, 0.52, R, 0.04)        -- fork
+  tube(0.42, 0.92, 0.46, 1.04, 0.035)    -- stem
+  tube(-0.24, 0.98, -0.02, 0.98, 0.07)   -- saddle
+  box(fb, 0.48, 0, 1.02, 0, 0.06, 0.48, 0.05, 50, 50, 54) -- bars
+  box(fb, 0.02, -0.1, 0.3, 0, 0.12, 0.04, 0.16, 50, 50, 54) -- pedals / cranks
+  box(fb, 0.02, 0.06, 0.3, 0, 0.12, 0.04, 0.16, 50, 50, 54)
   -- wheels: rings
   for _, wx in ipairs({ -0.5, 0.52 }) do
     local seg = 18
@@ -489,11 +518,12 @@ local function build_bike()
       local a1, a2 = i / seg * math.pi * 2, (i + 1) / seg * math.pi * 2
       local x1, z1 = wx + math.cos(a1) * R, R + math.sin(a1) * R
       local x2, z2 = wx + math.cos(a2) * R, R + math.sin(a2) * R
-      local x3, z3 = wx + math.cos(a1) * (R - 0.04), R + math.sin(a1) * (R - 0.04)
-      local x4, z4 = wx + math.cos(a2) * (R - 0.04), R + math.sin(a2) * (R - 0.04)
-      quad(wb, x1, 0.012, z1, x2, 0.012, z2, x4, 0.012, z4, x3, 0.012, z3, 28, 28, 30, true)
-      quad(wb, x1, -0.012, z1, x2, -0.012, z2, x4, -0.012, z4, x3, -0.012, z3, 28, 28, 30, true)
-      quad(wb, x1, -0.012, z1, x2, -0.012, z2, x2, 0.012, z2, x1, 0.012, z1, 20, 20, 22, true)
+      local x3, z3 = wx + math.cos(a1) * (R - 0.075), R + math.sin(a1) * (R - 0.075)
+      local x4, z4 = wx + math.cos(a2) * (R - 0.075), R + math.sin(a2) * (R - 0.075)
+      quad(wb, x1, 0.035, z1, x2, 0.035, z2, x4, 0.035, z4, x3, 0.035, z3, 28, 28, 30, true)
+      quad(wb, x1, -0.035, z1, x2, -0.035, z2, x4, -0.035, z4, x3, -0.035, z3, 28, 28, 30, true)
+      quad(wb, x1, -0.035, z1, x2, -0.035, z2, x2, 0.035, z2, x1, 0.035, z1, 20, 20, 22, true)
+      quad(wb, x3, -0.02, z3, x4, -0.02, z4, x4, 0.02, z4, x3, 0.02, z3, 150, 150, 156, true)
     end
     for i = 0, 5 do -- spokes
       local a = i / 6 * math.pi
@@ -512,7 +542,8 @@ local rig_z = CreateClientConVar("physplay_rig_z", "0.42", true, false, "rider h
 local rig_lean = CreateClientConVar("physplay_rig_lean", "28", true, false, "forward lean (degrees)")
 local rig_leg = CreateClientConVar("physplay_rig_leg", "22", true, false, "pedalling leg swing (degrees)")
 local rig_axis = CreateClientConVar("physplay_rig_axis", "2", true, false, "bone axis for pedalling: 1 pitch, 2 yaw, 3 roll")
-local SIT_SEQS = { "sit_rollercoaster", "sit", "drive_pd", "drive_jeep" }
+local rig_seq = CreateClientConVar("physplay_rig_seq", "", true, false, "force a sequence name for riders, e.g. drive_airboat")
+local SIT_SEQS = { "drive_airboat", "sit_rollercoaster", "drive_jeep", "sit", "sit_zen" }
 
 W.models = {}
 local function rider_model(idx, ply)
@@ -551,11 +582,19 @@ local function pose(e, mode, cadence, speed, dt)
     for _, b in pairs(e.bones) do if b then e:ManipulateBoneAngles(b, Angle(0, 0, 0)) end end
     return
   end
+  local forced = rig_seq:GetString()
+  if forced ~= (e.forced or "") then e.sit, e.forced = nil, forced end
   if not e.sit then
-    for _, s in ipairs(SIT_SEQS) do
+    local list = forced ~= "" and { forced } or SIT_SEQS
+    for _, s in ipairs(list) do
       local id = e:LookupSequence(s)
-      if id and id >= 0 then e.sit = id break end
+      if id and id >= 0 then e.sit, e.sit_name = id, s break end
     end
+    if not e.sit then
+      local id = e.SelectWeightedSequence and e:SelectWeightedSequence(ACT_DRIVE_AIRBOAT)
+      if id and id >= 0 then e.sit, e.sit_name = id, "ACT_DRIVE_AIRBOAT" end
+    end
+    print("[PhysPlay] rider pose for " .. tostring(e.mdl) .. ": " .. tostring(e.sit_name or "none found"))
   end
   if e.sit and e:GetSequence() ~= e.sit then e:ResetSequence(e.sit) end
   e.crank = (e.crank + dt * (cadence or 0) / 60 * math.pi * 2) % (math.pi * 2)
@@ -621,14 +660,14 @@ function W.Init()
   local t0 = SysTime()
   prepare_terrain()
   setup_chunks()
-  build_roads()
   build_bike()
   W.ready = true
-  print(string.format("[PhysPlay] world ready in %.2f s (%d terrain chunks, %d road pieces)", SysTime() - t0, #W.chunks, #W.roads))
+  print(string.format("[PhysPlay] world ready in %.2f s (%d terrain chunks)", SysTime() - t0, #W.chunks))
 end
 
 function W.SetRoute(r)
   if not W.ready then W.Init() end
+  build_roads(r)
   build_route_props(r)
 end
 

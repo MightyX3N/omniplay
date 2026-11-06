@@ -75,7 +75,7 @@ assert(st and st.type == "state" and st.speed_kmh == 25.6 and st.power == 140 an
 c:send(masked('{"game":"PhysPlay","grade":6,"take_input":true}'))
 tick(1)
 assert(api.game_name() == "PhysPlay" and api.take_input(), "game should be registered")
-assert(math.abs(api.grade - 4) < 0.21, "grade should ramp at 4 %/s, is " .. tostring(api.grade))
+assert(math.abs(api.grade - 6) < 0.31, "grade should ramp at 6 %/s, is " .. tostring(api.grade))
 tick(1)
 assert(api.grade == 6 and sent_grades[#sent_grades] == 6, "grade should reach 6")
 
@@ -103,6 +103,11 @@ assert(api.game_name() == nil, "stale cmd.txt should be ignored")
 gmod_write(2, 8)
 tick(0.5)
 assert(api.game_name() == "Garry's Mod", "gmod should be connected")
+-- latency: the game acks the state it saw
+local seen = json.decode(io.open("/tmp/omni-api/omniplay/live.txt"):read("*a")).seq
+local f = io.open("/tmp/omni-api/omniplay/cmd.txt", "wb"); f:write(json.encode({ beat = 99, game = "Garry's Mod", ack = seen })); f:close()
+tick(0.1)
+assert(#api.stats.rtt == 1 and api.stats.rtt[1] < 0.3, "round trip should be measured")
 -- the user turned hills off: requests are ignored
 dev.allow_hills = false
 local before = #sent_grades
