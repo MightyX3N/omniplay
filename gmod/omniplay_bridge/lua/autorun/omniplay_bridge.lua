@@ -11,6 +11,7 @@
 --   OmniPlay.SetGrade(pct)          -> hill in %, nil = flat / release
 --   OmniPlay.SetBeltSpeed(kmh)      -> treadmill speed (only if the user allowed it, capped at their max)
 --   OmniPlay.TakeInput(bool)        -> true = OmniPlay stops pressing keys, you read Get() yourself
+--   OmniPlay.SetInfo(text)          -> a status line written to OmniPlay's log (for debugging)
 --   hook "OmniPlay_Data" (data)     -> new data arrived (about 10 times a second)
 -- SERVER
 --   ply:OmniPlayData()              -> that player's last data (sent by their client 4x a second; trust it like any client input)
@@ -74,6 +75,7 @@ function OmniPlay.SetGame(name) want.game, want.used = tostring(name), true end
 function OmniPlay.SetGrade(pct) want.grade, want.used = pct and math.Clamp(tonumber(pct) or 0, -10, 20) or nil, true end
 function OmniPlay.SetBeltSpeed(kmh) want.belt_speed, want.used = tonumber(kmh), true end
 function OmniPlay.TakeInput(on) want.take_input, want.used = on and true or false, true end
+function OmniPlay.SetInfo(text) want.info, want.used = text and tostring(text):sub(1, 300) or nil, true end -- shown in OmniPlay's log
 
 timer.Create("OmniPlay_Read", 0.1, 0, function()
   local raw = file.Read("omniplay/live.txt", "DATA")
@@ -93,7 +95,7 @@ timer.Create("OmniPlay_Write", 0.5, 0, function()
   file.Write("omniplay/cmd.txt", util.TableToJSON({
     beat = beat, game = want.game or "Garry's Mod",
     grade = want.grade == nil and false or want.grade,
-    belt_speed = want.belt_speed, take_input = want.take_input == true,
+    belt_speed = want.belt_speed, take_input = want.take_input == true, info = want.info,
   }))
 end)
 

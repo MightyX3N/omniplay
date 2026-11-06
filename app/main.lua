@@ -22,8 +22,11 @@ local sel_profile, sel_hist, capture = 1, 1, nil
 local hist_cache = {}
 local build = "dev"
 
+local log_file
 local function add_log(kind, text)
   log[#log + 1] = { t = os.date("%H:%M:%S"), kind = kind, text = text }
+  if log_file == nil then log_file = io.open(store.exe_dir() .. "/omniplay-log.txt", "w") or false end
+  if log_file then log_file:write(os.date("%H:%M:%S"), " ", kind, " ", text, "\n"); log_file:flush() end
   if #log > 500 then table.remove(log, 1) end
 end
 

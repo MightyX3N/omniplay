@@ -1,0 +1,6 @@
+"omniplay_test"
+{
+	"base"		"sandbox"
+	"title"		"OmniPlay Test"
+	"menusystem"	"1"
+}

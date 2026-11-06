@@ -118,8 +118,12 @@ local function apply(g, msg)
   g.seen = M.now()
   local name = msg.game or msg.name
   if type(name) == "string" and name ~= "" and name ~= g.name then
-    g.name = name:sub(1, 40)
+    g.name = name:sub(1, 60)
     M.log("info", "game connected: " .. g.name)
+  end
+  if type(msg.info) == "string" and msg.info ~= g.info then
+    g.info = msg.info:sub(1, 300)
+    M.log("info", (g.name or "game") .. ": " .. g.info)
   end
   local grade = msg.grade
   if msg.type == "grade" then grade = msg.pct or msg.grade end
@@ -190,16 +194,21 @@ local function handle_http(c)
   local method, path = head:match("^(%u+) (%S+)")
   local h = {}
   for k, v in head:gmatch("\r\n([^:\r\n]+):%s*([^\r\n]*)") do h[k:lower()] = v end
-  if h.origin then -- a web page: never let websites talk to your machine
+  -- web pages: never let websites talk to your machine. Garry's Mod's own menu browser
+  -- (asset://garrysmod) is the only page origin allowed.
+  if h.origin and not h.origin:lower():match("^asset://garrysmod") then
+    M.log("err", "refused a connection from a web page (" .. h.origin:sub(1, 80) .. ")")
     csend(c, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     c.close_after = true
     return
   end
+  c.origin = h.origin
   if method == "GET" and (h.upgrade or ""):lower() == "websocket" and h["sec-websocket-key"] then
     csend(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
       .. accept_key(h["sec-websocket-key"]) .. "\r\n\r\n")
     c.ws = true
     game(c.id, "websocket")
+    M.log("info", "WebSocket client connected" .. (c.origin and (" from " .. c.origin) or ""))
     if M.last_state then csend(c, ws_frame(1, M.last_state)) end
     return
   end
