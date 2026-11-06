@@ -7,6 +7,7 @@ local devices = require("devices")
 local session = require("session")
 local output = require("output")
 local explore = require("explore")
+local api = require("api")
 local C = ui.C
 
 local ble, load_err
@@ -112,6 +113,7 @@ function love.load()
   output.init(add_log)
   session.init(add_log)
   add_log("info", "OmniPlay build " .. build)
+  api.init(add_log, store.load("api.lua", {}))
   if not ble then return end
   devices.init(ble, add_log)
   local last = saved.last and find_saved(saved.last)
@@ -122,9 +124,13 @@ function love.update(dt)
   if not ble then return end
   devices.update(dt)
   local d = devices.dev
-  session.game = output.profile and output.profile.name
+  session.game = api.game_name() or (output.profile and output.profile.name)
   session.update(dt, devices.m, d)
+  output.suppressed = api.take_input()
   output.update(dt, devices.m, d and d.kind)
+  local s = session.cur
+  api.update(dt, devices.m, d, devices.state, devices,
+    { gait = output.gait, recording = session.state, distance_m = s and math.floor(s.distance), elapsed_s = s and math.floor(s.elapsed) })
   if ex.running then
     ex.t = ex.t + dt
     local st = ble.sb_explore_state()
@@ -162,6 +168,7 @@ function love.keypressed(k)
 end
 
 function love.quit()
+  api.shutdown()
   output.release_all()
   if session.cur then session.finish() end
   if devices.state ~= "idle" then devices.disconnect() end
@@ -234,6 +241,21 @@ local function draw_session(x, y, w, h)
   if ui.button(output.enabled and "Turn off" or "Turn on", x + w - 110, y + 14, 98, 34,
     output.enabled and "secondary" or "primary") then output.toggle() end
   y = y + 78
+  -- connected games (mod API)
+  ui.rect(x, y, w, 40, C.panel)
+  local g = api.active()
+  local gl
+  if g and g.name then
+    gl = "Connected game: " .. g.name
+    if api.grade_target then gl = gl .. string.format("    Hill: %+.1f%%", api.grade_target)
+      if devices.dev and devices.dev.kind == "ftms_bike" and devices.dev.allow_hills == false then gl = gl .. " (hills are off for this bike)" end
+    end
+    if api.take_input() then gl = gl .. "    Reads your movement directly, keys paused" end
+  else
+    gl = "No game connected through the mod API" .. (api.gmod_dir and "  ·  Garry's Mod bridge ready" or "")
+  end
+  ui.text(gl, x + 14, y + 12, g and g.name and C.accent or C.muted, "small", w - 28)
+  y = y + 52
   -- recording buttons
   if session.cur then
     if ui.button(session.user_paused and "Resume" or "Pause", x, y, (w - 12) / 2, 40, "secondary") then session.toggle_pause() end

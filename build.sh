@@ -26,5 +26,6 @@ cat "$LOVE_DIR/love.exe" build/game.love > dist/OmniPlay/OmniPlay.exe
 cp "$LOVE_DIR"/*.dll dist/OmniPlay/
 cp "$LOVE_DIR/license.txt" dist/OmniPlay/LOVE-license.txt
 cp build/omniplay_ble.dll LICENSE dist/OmniPlay/
+mkdir -p dist/OmniPlay/gmod-addon && cp -r gmod/omniplay_bridge dist/OmniPlay/gmod-addon/ && cp docs/API.md dist/OmniPlay/
 (cd dist && zip -q -9 -r OmniPlay.zip OmniPlay)
 echo "built dist/OmniPlay.zip"

@@ -91,6 +91,24 @@ local devices = require("devices")
 assert(devices.state == "connected", "should be connected, is " .. devices.state)
 assert(devices.m.cadence and devices.m.cadence > 0, "should decode cadence")
 
+-- a game connects over the mod API and asks for a hill; it must reach the bike as FTMS simulation (0x11)
+local socket = require("socket")
+local bit = require("bit")
+local ws = assert(socket.connect("127.0.0.1", 21890)); ws:settimeout(0)
+ws:send("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+run(0.5)
+local msg = '{"game":"PhysPlay","grade":5,"take_input":true}'
+local t = {}
+for i = 1, #msg do t[i] = string.char(bit.bxor(msg:byte(i), 7)) end
+ws:send(string.char(0x81, 0x80 + #msg, 7, 7, 7, 7) .. table.concat(t))
+run(3)
+local api = require("api")
+assert(api.game_name() == "PhysPlay", "game should show up")
+local sim
+for _, w in ipairs(fake.writes) do if w[1] == 0x11 then sim = w end end
+assert(sim and sim[4] + sim[5] * 256 == 500, "5% hill should reach the bike")
+assert(require("output").suppressed, "keys should pause while the game reads input")
+
 run(120)
 local session = require("session")
 assert(session.state == "recording", "should be recording, is " .. session.state)

@@ -143,7 +143,7 @@ function M.update(dt, m, kind)
   if g ~= "stopped" then last_move_t = 0 else last_move_t = last_move_t + dt end
   if g == "stopped" and last_move_t < (p.hold_s or 2) and M.gait ~= "stopped" then g = M.gait end
   M.gait = g
-  if not M.enabled or M.self_focused then set_held({}) return end
+  if not M.enabled or M.self_focused or M.suppressed then set_held({}) return end
   set_held(g ~= "stopped" and p[g] and p[g].keys or {})
 end
 
