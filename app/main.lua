@@ -24,7 +24,8 @@ local sel_profile, sel_hist, capture = 1, 1, nil
 local hist_cache = {}
 local live_m, live_dev
 -- routes: the selected file, the ride in progress, and the hill strength (1, 0.5 or 0)
-local rt = { sel = nil, ride = nil, strength = 1, msg = nil, msg_t = 0 }
+local rt = { sel = nil, ride = nil, strength = 1, walk = 4, msg = nil, msg_t = 0 }
+local function save_rt() store.save("routes.lua", { strength = rt.strength, walk = rt.walk }) end
 local build = "dev"
 
 local log_file
@@ -121,7 +122,8 @@ function love.load()
   build = okv and v or "dev"
   love.window.setTitle("OmniPlay  (build " .. build .. ")")
   store.migrate()
-  rt.strength = (store.load("routes.lua", {}).strength) or 1
+  local rs_ = store.load("routes.lua", {})
+  rt.strength, rt.walk = rs_.strength or 1, rs_.walk or 4
   ui.load()
   ble, load_err = bleload.load()
   saved = store.load("devices.lua", saved)
@@ -198,6 +200,46 @@ function love.update(dt)
     rr.last_e = here.e
     rr.grade = here.g
     api.route_grade = rt.strength > 0 and here.g * rt.strength or nil
+    -- walking pad / treadmill: tilt if it can, else the belt speed follows the hill
+    local pad = devices.belt()
+    rr.pad = nil
+    local game = api.active()
+    if pad and not (game and (game.belt or game.grade)) and rt.strength > 0 then
+      if devices.can_tilt(pad) then
+        devices.set_incline(here.g * rt.strength)
+        rr.pad = { tilt = true, name = pad.dev.name }
+      elseif pad.dev.allow_speed then
+        local lo, hi = devices.min_belt(pad.dev.kind), pad.dev.max_speed or 4
+        local function speed_at(g) return math.max(lo, math.min(hi, rt.walk * route.walk_factor(g, rt.strength))) end
+        local want = speed_at(here.g)
+        local moving = (pad.m.speed_kmh or 0) > 0.3 and (pad.m.state == nil or pad.m.state == "running")
+        -- you changed the speed on the remote: that is your new normal pace
+        local cmd = pad.belt_cmd
+        if moving and cmd and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs((pad.m.speed_kmh or 0) - cmd) > 0.25 then
+          rr.manual_t = (rr.manual_t or 0) + dt
+          if rr.manual_t > 2.5 then
+            rt.walk = math.max(lo, math.min(hi, pad.m.speed_kmh / route.walk_factor(here.g, rt.strength)))
+            rt.walk = math.floor(rt.walk * 10 + 0.5) / 10
+            save_rt(); rr.manual_t = 0
+            want = speed_at(here.g)
+            pad.belt_cmd, pad.belt_target = pad.m.speed_kmh, pad.m.speed_kmh
+            add_log("info", string.format("new walking pace from the remote: %.1f km/h on the flat", rt.walk))
+          end
+        else rr.manual_t = 0 end
+        if moving then devices.set_belt_speed(want, 0.2) end
+        -- heads-up for what the belt will do in ~10 s
+        local v = math.max(1, pad.m.speed_kmh or rt.walk)
+        local later = speed_at(route.at(rr.r, rr.pos + v / 3.6 * 10).g)
+        local notice
+        if moving and math.abs(later - want) >= 0.3 then
+          notice = string.format("%s ahead, %s to %.1f", later < want and "Climb" or "Downhill",
+            later < want and "slowing" or "speeding up", later)
+        end
+        rr.pad = { speed = pad.belt_target or want, name = pad.dev.name, notice = notice, moving = moving }
+      else
+        rr.pad = { off = true, name = pad.dev.name }
+      end
+    end
     if rr.pos >= rr.r.length and not rr.done then
       rr.done = true
       add_log("info", "route finished: " .. rr.r.name)
@@ -344,7 +386,12 @@ local function draw_ride_route(x, y, w, h)
   local g = rr.grade or 0
   local bike = hill_bike()
   local note
-  if api.grade_target then note = "the game sets the hill"
+  local pd = rr.pad
+  if pd and not api.grade_target and rt.strength > 0 then
+    if pd.tilt then note = "hill now · tilting " .. pd.name
+    elseif pd.off then note = "belt speed control is off for " .. pd.name
+    else note = pd.notice or string.format("belt %.1f km/h%s", pd.speed, pd.moving and "" or " · waiting for you to start") end
+  elseif api.grade_target then note = "the game sets the hill"
   elseif rt.strength == 0 then note = "hills off for routes"
   elseif not bike then note = "no smart bike connected"
   elseif bike.allow_hills == false then note = "hills off for this bike"
@@ -535,7 +582,9 @@ local function draw_routes(x, y, w, h)
   -- left: the list
   local lw = math.max(250, math.floor(w * 0.29))
   local ly = y
-  local listh = h - 250
+  local has_pad = false
+  for _, dv in ipairs(saved.devices) do if dv.kind == "sperax" or dv.kind == "ftms_treadmill" then has_pad = true end end
+  local listh = h - (has_pad and 340 or 250)
   ui.begin_scroll("routes", x, y, lw, listh)
   for _, f in ipairs(files) do
     local r = route.load(f)
@@ -565,8 +614,17 @@ local function draw_routes(x, y, w, h)
   ui.rect(x, hy, lw, h - (hy - y), C.card, 22)
   ui.text("Hills on routes", x + 18, hy + 14, C.muted, "b")
   local nv = ui.seg({ { 1, "Full" }, { 0.5, "Half" }, { 0, "Off" } }, rt.strength, x + 18, hy + 42, "b")
-  if nv ~= rt.strength then rt.strength = nv; store.save("routes.lua", { strength = nv }) end
-  ui.text("A connected game always sets the hill itself.", x + 18, hy + 82, C.dim, "xs", lw - 36)
+  if nv ~= rt.strength then rt.strength = nv; save_rt() end
+  local ty = hy + 82
+  if has_pad then
+    local nw_ = ui.stepper("Walk on flat", rt.walk, 0.1, 1, 12, "%.1f km/h", x + 18, ty, lw - 36)
+    if nw_ ~= rt.walk then rt.walk = nw_; save_rt() end
+    ty = ty + 48
+    ui.text("Slower uphill, faster gently downhill. The remote sets a new pace.",
+      x + 18, ty, C.dim, "xs", lw - 36)
+    ty = ty + 32
+  end
+  ui.text("A connected game always sets the hill itself.", x + 18, ty, C.dim, "xs", lw - 36)
   -- right: the selected route
   local rx, rw = x + lw + 16, w - lw - 16
   ui.rect(rx, y, rw, h, C.card, 26)
@@ -712,9 +770,9 @@ local function device_card(d, x, y, w)
     d.allow_hills = ui.toggle("Games may set hills", "Resistance follows the gradient in games and routes", d.allow_hills ~= false, x + 18, yy, w - 36)
     yy = yy + 50
   elseif d.kind == "sperax" or d.kind == "ftms_treadmill" then
-    d.allow_speed = ui.toggle("Games may change belt speed", "Off by default", d.allow_speed == true, x + 18, yy, w - 36)
+    d.allow_speed = ui.toggle("Games and routes may change belt speed", "Off by default · never above the max below", d.allow_speed == true, x + 18, yy, w - 36)
     yy = yy + 50
-    d.max_speed = ui.stepper("Max speed games may set", d.max_speed or 4, 0.5, 1, 12, "%.1f km/h", x + 18, yy, w - 36)
+    d.max_speed = ui.stepper("Max speed", d.max_speed or 4, 0.5, 1, 12, "%.1f km/h", x + 18, yy, w - 36)
     yy = yy + 50
     if d.kind == "sperax" then
       d.stop_when_steps_stop = ui.toggle("Stop in game when your steps stop", nil, d.stop_when_steps_stop ~= false, x + 18, yy, w - 36)

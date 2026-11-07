@@ -49,6 +49,7 @@ local EXPLORE = {
   AABBCCDDEEFF = { "service " .. U("1826"), "char " .. U("2acc") .. " props 2", "char " .. U("2ad2") .. " props 10",
     "char " .. U("2ad9") .. " props 28", "listening 500" },
   ["778899AABBCC"] = { "service " .. U("1816"), "char " .. U("2a5b") .. " props 16", "listening 500" },
+  ["CCDDEEFF0011"] = { "service " .. U("1826"), "char " .. U("2acd") .. " props 16", "char " .. U("2ad9") .. " props 28", "listening 500" },
 }
 local lib = {
   sb_last_error = function() return "fake error" end,
@@ -56,13 +57,22 @@ local lib = {
   sb_scan_start = function() return 0 end,
   sb_scan_stop = noop,
   sb_scan_list = function(buf, max) return put(buf, max,
-    "HT2405118\tAABBCCDDEEFF\t-60\t100\t1\nROCKBROS C\t778899AABBCC\t-55\t100\t4\nTV\t112233445566\t-80\t100\t0\n") end,
+    "HT2405118\tAABBCCDDEEFF\t-60\t100\t1\nROCKBROS C\t778899AABBCC\t-55\t100\t4\nTV\t112233445566\t-80\t100\t0\n" ..
+    (fake.treadmill and "Treadmill\tCCDDEEFF0011\t-50\t100\t1\n" or "")) end,
   sb_open_h = function(addr) local h = #fake.conns fake.conns[h + 1] = { addr = ffi.string(addr), state = 1, open_t = clock, q = {} } return h end,
   sb_state_h = function(h) local c = fake.conns[h + 1] return c and c.state or 0 end,
   sb_error_h = function() return "fake error" end,
   sb_status_h = function() return "" end,
   sb_dropped_h = function() return 0 end,
-  sb_write_h = function(h, buf, n) local t = {} for i = 0, n - 1 do t[#t + 1] = buf[i] end fake.writes[#fake.writes + 1] = t; return 0 end,
+  sb_write_h = function(h, buf, n)
+    local t = {} for i = 0, n - 1 do t[#t + 1] = buf[i] end
+    t.addr = fake.conns[h + 1] and fake.conns[h + 1].addr
+    fake.writes[#fake.writes + 1] = t
+    -- the fake treadmill follows speed commands like a real one
+    if t.addr == "CCDDEEFF0011" and t[1] == 0x02 then fake.belt = (t[2] + t[3] * 256) / 100 end
+    if t.addr == "CCDDEEFF0011" and t[1] == 0x03 then fake.incline_set = (t[2] + t[3] * 256) / 10 end
+    return 0
+  end,
   sb_read_h = function(h, buf, max, which)
     local c = fake.conns[h + 1]
     local p = c and table.remove(c.q, 1)
@@ -97,6 +107,11 @@ local function step(dt)
       if fake.crank then fake.revs = (fake.revs or 0) + 1.5 fake.ctime = (fake.ctime or 0) + 1024 end
       local r, t = math.floor(fake.revs or 0) % 65536, math.floor((fake.ctime or 0) * (math.floor(fake.revs or 0) / math.max(1, fake.revs or 1))) % 65536
       c.q[#c.q + 1] = { 2, r % 256, math.floor(r / 256), t % 256, math.floor(t / 256) }
+    end
+    if c.state == 2 and c.addr == "CCDDEEFF0011" and frame % 5 == 0 then
+      local v = math.floor((fake.belt or 0) * 100 + 0.5)
+      if fake.tilts then c.q[#c.q + 1] = { 0x08, 0, v % 256, math.floor(v / 256), 0, 0, 0, 0 }
+      else c.q[#c.q + 1] = { 0, 0, v % 256, math.floor(v / 256) } end
     end
   end
   T.set_tab(tabs[frame % 6 + 1])
@@ -186,6 +201,7 @@ g[#g + 1] = '</trkseg></trk></gpx>'
 local gpx = table.concat(g)
 love.filedropped({ getFilename = function() return "C:\\Users\\x\\hill test.gpx" end, open = noop, close = noop, read = function() return gpx end })
 local rt = T.rt()
+local function route_factor(g) return require("route").walk_factor(g, 1) end
 assert(rt.sel == "hill test.gpx" and mem["data/routes/hill test.gpx"], "dropped GPX should be imported")
 local r = require("route").load(rt.sel)
 assert(math.abs(r.length - 4000) < 30 and math.abs(r.climb - 120) < 8, "route stats: " .. r.length .. " m, climb " .. r.climb)
@@ -214,6 +230,41 @@ assert(st.camera and st.device.name == "Camera" and math.abs(st.speed_kmh - 28.8
 for _ = 1, 10 do api2.camera = { moving = false, cadence = 0, fps = 30, activity = "cycling", t = api2.now() } run(0.05) end
 st = require("json").decode(api2.last_state)
 assert(st.speed_kmh == 0 and not st.moving, "camera says still -> stopped at once")
+-- walking pad on a route: slower uphill, faster gently downhill, the remote sets a new pace
+fake.treadmill, fake.belt = true, 4.0
+run(1.5)
+local tm
+for _, n in ipairs(T.nearby()) do if n.name == "Treadmill" then tm = n end end
+assert(tm, "treadmill should be listed")
+T.add_device(tm)
+run(3)
+local tdev = T.saved().devices[#T.saved().devices]
+assert(tdev.kind == "ftms_treadmill" and devices.state_of(tdev) == "connected", "treadmill connected")
+tdev.allow_speed, tdev.max_speed = true, 6
+rt.strength, rt.walk = 1, 4
+rt.ride = { r = r, pos = 2400, climbed = 0 } -- on the 6 % climb
+run(20)
+local want = 4 * route_factor(6)
+assert(math.abs(fake.belt - want) < 0.15, string.format("uphill belt %.2f, want %.2f", fake.belt, want))
+print(string.format("walking: 6 %% climb -> belt %.1f km/h (flat pace 4.0)", fake.belt))
+-- remote: the walker speeds up to 3.8; after a few seconds that becomes the new pace
+fake.belt = 3.8
+run(4)
+assert(math.abs(rt.walk - 3.8 / route_factor(6)) < 0.15, "remote change should set a new flat pace, got " .. rt.walk)
+assert(math.abs(fake.belt - 3.8) < 0.15, "and the belt stays where the walker put it, " .. fake.belt)
+-- stopped: the app never starts the belt again
+fake.belt = 0
+local nw = #fake.writes
+run(4)
+for i = nw + 1, #fake.writes do assert(not (fake.writes[i].addr == "CCDDEEFF0011" and fake.writes[i][1] == 0x02), "must not start a stopped belt") end
+fake.belt = 3.8
+-- a treadmill that tilts gets the hill as incline and keeps its speed
+fake.tilts, fake.incline_set = true, nil
+local before = fake.belt
+run(3)
+assert(fake.incline_set and math.abs(fake.incline_set - 6) < 0.3, "tilting treadmill should get the incline, got " .. tostring(fake.incline_set))
+assert(math.abs(fake.belt - before) < 0.05, "and its speed is left alone")
+rt.ride = nil
 love.keypressed("f8")
 local output = require("output")
 assert(output.enabled, "F8 should enable output")

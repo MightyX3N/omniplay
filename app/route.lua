@@ -120,6 +120,13 @@ function M.color(g, C)
   return C.red
 end
 
+-- Walking: Tobler's hiking function, scaled so the flat is 1. Fastest at -5 %, slower up and on steep downs.
+-- strength 1 = full change, 0.5 = half the change.
+function M.walk_factor(g, strength)
+  local f = math.exp(-3.5 * (math.abs(g / 100 + 0.05) - 0.05))
+  return 1 + (f - 1) * (strength or 1)
+end
+
 -- ---------- files ----------
 function M.list()
   love.filesystem.createDirectory(DIR)

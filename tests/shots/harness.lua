@@ -95,6 +95,7 @@ function love.load()
     end
   end
   local rt = T.rt()
+  table.insert(T.saved().devices, { name = "Sperax P1", addr = "001122334455", kind = "sperax", auto = false, allow_speed = true, max_speed = 6 })
   local files = route.list()
   for _, f in ipairs(files) do assert(route.load(f), "route did not load: " .. f) end
   print("routes", table.concat(files, ", "))

@@ -241,7 +241,7 @@ local function update_conn(c, dt)
     c.belt_t = (c.belt_t or 0) + dt
     if c.belt_t >= 0.5 then
       local cur = c.belt_cmd or c.m.speed_kmh or 0
-      local step = BELT_RAMP * c.belt_t
+      local step = (c.belt_ramp or BELT_RAMP) * c.belt_t
       local nxt = c.belt_target > cur and math.min(c.belt_target, cur + step) or math.max(c.belt_target, cur - step)
       c.belt_t = 0
       if not c.belt_cmd or math.abs(nxt - c.belt_cmd) >= 0.1 then
@@ -364,17 +364,34 @@ function M.set_grade(pct)
   return true
 end
 
--- Belt speed: only if the user switched it on, never above their max, ramped.
-function M.set_belt_speed(kmh)
+-- the connected walking pad / treadmill, if any (its connection: dev, m, belt_cmd, belt_target)
+function M.belt()
   for _, addr in ipairs(M.order) do
     local c = M.conns[addr]
-    local d = c.dev
-    if c.state == "connected" and d.allow_speed and (d.kind == "sperax" or d.kind == "ftms_treadmill") then
-      c.belt_target = math.max(d.kind == "sperax" and 1.0 or 0.5, math.min(d.max_speed or 4, kmh))
-      return true
-    end
+    if c.state == "connected" and (c.dev.kind == "sperax" or c.dev.kind == "ftms_treadmill") then return c end
   end
-  return false
+end
+M.min_belt = function(kind) return kind == "sperax" and 1.0 or 0.5 end
+
+-- Belt speed: only if the user switched it on, never above their max, ramped (km/h per second).
+function M.set_belt_speed(kmh, ramp)
+  local c = M.belt()
+  if not (c and c.dev.allow_speed) then return false end
+  c.belt_target = math.max(M.min_belt(c.dev.kind), math.min(c.dev.max_speed or 4, kmh))
+  c.belt_ramp = ramp
+  return true
+end
+
+-- Treadmills that report an incline can tilt: send the hill there instead of changing the speed.
+function M.can_tilt(c) return c and c.dev.kind == "ftms_treadmill" and c.m.incline ~= nil end
+function M.set_incline(pct)
+  local c = M.belt()
+  if not M.can_tilt(c) or c.dev.allow_hills == false then return false end
+  pct = math.max(-6, math.min(15, pct))
+  if c.last_incline and (math.abs(pct - c.last_incline) < 0.5 or c.grade_t < 2) then return true end
+  write(c, ftms.target_incline(pct))
+  c.last_incline, c.grade_t = pct, 0
+  return true
 end
 
 -- ---------- update ----------
