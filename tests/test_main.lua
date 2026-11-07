@@ -69,6 +69,8 @@ local lib = {
   sb_write_h = function(h, buf, n)
     local t = {} for i = 0, n - 1 do t[#t + 1] = buf[i] end
     t.addr = fake.conns[h + 1] and fake.conns[h + 1].addr
+    -- a pad that has just started can refuse writes for a moment
+    if t.addr == "5A5A5A5A5A5A" and t[4] == 0x15 and (fake.sp_fail or 0) > 0 then fake.sp_fail = fake.sp_fail - 1; return -4 end
     fake.writes[#fake.writes + 1] = t
     -- the fake treadmill follows speed commands like a real one
     if t.addr == "CCDDEEFF0011" and t[1] == 0x02 then fake.belt = (t[2] + t[3] * 256) / 100 end
@@ -303,6 +305,14 @@ run(50)
 assert(math.abs(fake.sp_speed - 4) < 0.15, string.format("pad should reach 4 km/h by itself, at %.2f", fake.sp_speed))
 assert(math.abs(rt.walk - 4) < 0.05, "slow start must not change the pace, got " .. rt.walk)
 print(string.format("sperax: started at 0.3, route took it to %.1f km/h", fake.sp_speed))
+-- stopped with the remote mid-route, then started again: no crash, and it climbs back up
+fake.sp_on, fake.sp_speed = false, 0
+run(3)
+fake.sp_on, fake.sp_speed = true, 0.3
+-- the state the crash came from: the pad running again, no command sent yet, the old one marked as reached
+fake.sp_fail = 3
+run(30)
+assert(math.abs(fake.sp_speed - 4) < 0.2, string.format("after a restart the pad should get back to 4 km/h, at %.2f", fake.sp_speed))
 rt.ride = nil
 love.keypressed("f8")
 local output = require("output")

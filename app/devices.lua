@@ -257,7 +257,7 @@ local function update_conn(c, dt)
       local ready = kind == "ftms_treadmill" or (kind == "sperax" and c.m.state == "running")
       if not ready then
         c.belt_t = 0
-        if kind == "sperax" then c.belt_cmd = nil end -- a stopped pad starts over from its real speed
+        if kind == "sperax" then c.belt_cmd, c.cmd_reached, c.resends = nil, false, 0 end -- a stopped pad starts over from its real speed
       else
         local lo = M.min_belt(kind)
         local cur = c.belt_cmd or math.max(lo, c.m.speed_kmh or 0)

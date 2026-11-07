@@ -219,7 +219,7 @@ function love.update(dt)
         -- actually reached our last command and then left it, so a slow start or a lagging pad isn't mistaken for you.
         local cmd = pad.belt_cmd
         local v_now = pad.m.speed_kmh or 0
-        if moving and pad.cmd_reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
+        if moving and cmd and pad.cmd_reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
           rr.manual_t = (rr.manual_t or 0) + dt
           if rr.manual_t > 2.5 then
             rt.walk = math.max(lo, math.min(hi, pad.m.speed_kmh / route.walk_factor(here.g, rt.strength)))
