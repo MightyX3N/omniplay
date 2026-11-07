@@ -3,6 +3,9 @@
 Games and mods can read live data from the user's bike, walking pad or footpod, and send
 hills or belt speed back. OmniPlay must be running on the same PC.
 
+For games, use the **[SDK](SDK.md)** (shared memory: GMod module, LÖVE file, C / DLL). This page
+describes the WebSocket and file bridge, for tools, scripts and engines that can't call C.
+
 ## Two ways to connect
 
 **WebSocket** — `ws://127.0.0.1:21890`

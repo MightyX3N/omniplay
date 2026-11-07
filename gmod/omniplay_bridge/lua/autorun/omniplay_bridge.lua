@@ -12,7 +12,9 @@
 --   OmniPlay.SetBeltSpeed(kmh)      -> treadmill speed (only if the user allowed it, capped at their max)
 --   OmniPlay.TakeInput(bool)        -> true = OmniPlay stops pressing keys, you read Get() yourself
 --   OmniPlay.SetInfo(text)          -> a status line written to OmniPlay's log (for debugging)
---   hook "OmniPlay_Data" (data)     -> new data arrived (about 10 times a second)
+--   hook "OmniPlay_Data" (data)     -> new data arrived (about 20 times a second)
+--   OmniPlay.Native                 -> true when the fast OmniPlay module is installed (garrysmod/lua/bin,
+--                                      OmniPlay installs it from its Games tab); otherwise the data folder is used
 -- SERVER
 --   ply:OmniPlayData()              -> that player's last data (camera = true when OmniPlay's camera sees the feet) (sent by their client up to 10x a second; trust it like any client input)
 --   ply:OmniPlaySetGrade(pct)       -> set that player's hill
@@ -67,9 +69,20 @@ local data, last_seq, last_change = nil, nil, 0
 local want = { game = nil, grade = nil, belt_speed = nil, take_input = nil, used = false }
 local beat = 0
 
-file.CreateDir("omniplay")
+-- the OmniPlay module (shared memory, no files) if it's installed; the data folder otherwise
+local native
+if util.IsBinaryModuleInstalled and util.IsBinaryModuleInstalled("omniplay") then
+  local ok, err = pcall(require, "omniplay")
+  if ok and omniplay_native then native = omniplay_native else print("[OmniPlay] module failed to load: " .. tostring(err)) end
+end
+OmniPlay.Native = native ~= nil
 
-function OmniPlay.IsConnected() return data ~= nil and RealTime() - last_change < 2 end
+if not native then file.CreateDir("omniplay") end
+
+function OmniPlay.IsConnected()
+  if native then return data ~= nil and native.Running() end
+  return data ~= nil and RealTime() - last_change < 2
+end
 function OmniPlay.Get() if OmniPlay.IsConnected() then return data end end
 function OmniPlay.SetGame(name) want.game, want.used, want.dirty = tostring(name), true, true end
 function OmniPlay.SetGrade(pct)
@@ -79,12 +92,20 @@ function OmniPlay.SetGrade(pct)
 end
 function OmniPlay.SetBeltSpeed(kmh) want.belt_speed, want.used, want.dirty = tonumber(kmh), true, true end
 function OmniPlay.TakeInput(on) want.take_input, want.used, want.dirty = on and true or false, true, true end
-function OmniPlay.SetInfo(text) want.info, want.used = text and tostring(text):sub(1, 300) or nil, true end -- shown in OmniPlay's log
+function OmniPlay.SetInfo(text) want.info, want.used, want.dirty = text and tostring(text):sub(1, 300) or nil, true, true end -- shown in OmniPlay's log
 
 -- read OmniPlay's file often (it's tiny and in the OS cache) and answer quickly, so hills
 -- and numbers don't wait on slow timers
 local last_write, ack_dirty = 0, false
+local function write_native()
+  native.SetGame(want.game or "Garry's Mod")
+  native.SetGrade(want.grade)
+  if want.belt_speed then native.SetBeltSpeed(want.belt_speed) end
+  if want.take_input ~= nil then native.TakeInput(want.take_input) end
+  if want.info then native.SetInfo(want.info) end
+end
 local function write_cmd()
+  if native then return write_native() end
   beat = beat + 1
   last_write = RealTime()
   ack_dirty = false
@@ -96,7 +117,24 @@ local function write_cmd()
 end
 OmniPlay._write = write_cmd
 
+local function read_native()
+  local js, seq = native.State() -- also tells OmniPlay we're still here
+  if not js then
+    if data then data = nil end
+  elseif seq ~= last_seq then
+    local t = util.JSONToTable(js)
+    if t then
+      last_seq, last_change = seq, RealTime()
+      data = t
+      OmniPlay.fresh = true
+      hook.Run("OmniPlay_Data", t)
+    end
+  end
+  if want.dirty then want.dirty = false; write_native() end
+end
+
 timer.Create("OmniPlay_Read", 0.02, 0, function()
+  if native then return read_native() end
   local raw = file.Read("omniplay/live.txt", "DATA")
   if raw then
     local t = util.JSONToTable(raw)
@@ -154,6 +192,7 @@ end)
 concommand.Add("omniplay_status", function()
   local d = OmniPlay.Get()
   if not d then print("[OmniPlay] not connected. Is OmniPlay running?") return end
+  print("[OmniPlay] via " .. (native and "the OmniPlay module" or "the data folder"))
   print(string.format("[OmniPlay] %s (%s)  %.1f km/h  cadence %.0f  power %s  hr %s  %s  hill %s",
     d.device and d.device.name or "no device", d.device and d.device.kind or "-", d.speed_kmh or 0, d.cadence or 0,
     tostring(d.power or "-"), tostring(d.hr or "-"), d.gait or "-", d.grade and (d.grade .. "%") or "-"))

@@ -355,6 +355,83 @@ local function file_bridge(state_json, seq_now)
   end
 end
 
+-- ---------- installing the GMod module + addon ----------
+-- Ships next to OmniPlay.exe in gmod-module/ and gmod-addon/omniplay_bridge/; goes into
+-- garrysmod/lua/bin and garrysmod/addons/omniplay_bridge.
+local GM_FILES = {
+  { "gmod-module/gmcl_omniplay_win32.dll", "lua/bin/gmcl_omniplay_win32.dll" },
+  { "gmod-module/gmcl_omniplay_win64.dll", "lua/bin/gmcl_omniplay_win64.dll" },
+  { "gmod-addon/omniplay_bridge/addon.json", "addons/omniplay_bridge/addon.json" },
+  { "gmod-addon/omniplay_bridge/lua/autorun/omniplay_bridge.lua", "addons/omniplay_bridge/lua/autorun/omniplay_bridge.lua" },
+}
+local GM_DIRS = { "lua", "lua/bin", "addons", "addons/omniplay_bridge", "addons/omniplay_bridge/lua", "addons/omniplay_bridge/lua/autorun" }
+local function gm_root() return M.gmod_dir and M.gmod_dir:gsub("[\\/]data$", "") end
+local function app_dir() return M.app_dir or (love.filesystem.getSourceBaseDirectory and love.filesystem.getSourceBaseDirectory()) or "." end
+local function slash(p) return IS_WIN and p:gsub("/", "\\") or p end
+
+-- "missing" (nothing bundled), "none", "installed", "update"
+function M.gmod_module_status()
+  local root = gm_root()
+  if not root then return "none" end
+  local any, all_same = false, true
+  for _, f in ipairs(GM_FILES) do
+    local src = read_file(slash(app_dir() .. "/" .. f[1]))
+    if not src then return "missing" end
+    local dst = read_file(slash(root .. "/" .. f[2]))
+    if dst then any = true end
+    if dst ~= src then all_same = false end
+  end
+  if not any then return "none" end
+  return all_same and "installed" or "update"
+end
+
+function M.gmod_install()
+  local root = gm_root()
+  if not root then return false, "Garry's Mod not found" end
+  for _, d in ipairs(GM_DIRS) do mkdir(slash(root .. "/" .. d)); if not IS_WIN then os.execute("mkdir -p '" .. root .. "/" .. d .. "'") end end
+  for _, f in ipairs(GM_FILES) do
+    local src = read_file(slash(app_dir() .. "/" .. f[1]))
+    if not src then return false, "missing " .. f[1] end
+    local dst = slash(root .. "/" .. f[2])
+    if read_file(dst) ~= src and not write_atomic(dst, src) then
+      return false, "couldn't write " .. f[2] .. " (close Garry's Mod first)"
+    end
+  end
+  M.log("info", "installed the OmniPlay module and addon into Garry's Mod")
+  return true
+end
+
+function M.gmod_uninstall()
+  local root = gm_root()
+  if not root then return false end
+  local ok = true
+  for _, f in ipairs(GM_FILES) do
+    local p = slash(root .. "/" .. f[2])
+    if read_file(p) and not os.remove(p) then ok = false end
+  end
+  if not ok then return false, "couldn't remove the module (close Garry's Mod first)" end
+  M.log("info", "removed the OmniPlay module and addon from Garry's Mod")
+  return true
+end
+
+-- ---------- shared memory (SDK, GMod module, LÖVE games) ----------
+local shm = require("shm")
+local function shm_bridge()
+  local js, beat, changed = shm.request()
+  if not js then return end
+  local fresh = shm.now() - beat < 3
+  if not fresh then if M.games.shm then drop("shm", "stopped") end return end
+  local g = M.games.shm
+  if changed or not g then
+    local msg = json.decode(js)
+    if type(msg) ~= "table" then return end
+    if msg.release then if g then drop("shm", "released") end return end
+    apply(game("shm", "shared memory"), msg)
+  else
+    g.seen = M.now()
+  end
+end
+
 -- ---------- lifecycle ----------
 function M.init(log_fn, opts)
   opts = opts or {}
@@ -409,6 +486,8 @@ local TYPES = { ftms_bike = "bike", ftms_treadmill = "treadmill", sperax = "trea
 -- m: live metrics; dev: active device; devstate: devices.state; ctl: devices module (set_grade, set_belt_speed)
 function M.update(dt, m, dev, devstate, ctl, extra)
   serve()
+  if M.shm_ok == nil then M.shm_ok = shm.open() and true or false; if not M.shm_ok then M.log("err", "shared memory for games could not be opened") end end
+  shm_bridge()
   extra = extra or {}
   -- expire file-bridge games that stopped writing
   local g = M.games.gmod
@@ -486,6 +565,7 @@ function M.update(dt, m, dev, devstate, ctl, extra)
   local frame = ws_frame(1, M.last_state)
   for _, c in ipairs(clients) do if c.ws and not c.dead then csend(c, frame) end end
   file_bridge(M.last_state, seq)
+  shm.publish(st, M.last_state)
 end
 
 function M.count()
@@ -504,6 +584,7 @@ function M.camera_cmd(t)
 end
 
 function M.shutdown()
+  shm.close()
   if M.gmod_dir then write_atomic(M.gmod_dir .. "/omniplay/live.txt", json.encode({ type = "state", v = 1, app = "OmniPlay", closed = true, seq = seq + 1 })) end
   for _, c in ipairs(clients) do pcall(function() c.sock:close() end) end
   clients = {}
