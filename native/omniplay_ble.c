@@ -91,34 +91,47 @@ enum { SV_FTMS = 1, SV_RSC = 2, SV_CSC = 4, SV_POWER = 8, SV_HR = 16, SV_FFF0 = 
 static CRITICAL_SECTION g_lock;
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 static char g_err[512], g_status[256];
-static volatile LONG g_state;            /* 0 idle, 1 connecting, 2 connected, -1 failed */
-static unsigned char g_q[QCAP][PKTMAX];
-static int g_qlen[QCAP], g_qwhich[QCAP], g_qhead, g_qtail, g_dropped;
 static Dev g_devs[MAXDEV];
 static int g_ndev;
 
 static void *g_watcher;
 static EventRegistrationToken g_recv_tok;
+static void *g_buffactory;
 #define MAXNOTIFY 4
-static void *g_device, *g_service, *g_notify[MAXNOTIFY], *g_write, *g_buffactory;
-static EventRegistrationToken g_change_tok[MAXNOTIFY];
-static int g_write_noresp;
-static HANDLE g_thread;
-static GUID g_svc, g_nchar[MAXNOTIFY], g_wchar;
-static int g_nnotify, g_has_w;
-static UINT64 g_addr;
-static INT32 g_cache_mode = 1; /* 1 = Uncached (first connect), 0 = Cached (fast reconnect) */
+#define MAXCONN 8
+
+typedef struct { void **vtbl; const GUID *iid; } Delegate;
+/* one Bluetooth connection; several can be open at once (bike + sensor + heart-rate strap...) */
+typedef struct { Delegate d; int conn; } ConnDelegate;
+typedef struct {
+    volatile LONG state;                 /* 0 free/idle, 1 connecting, 2 connected, -1 failed */
+    UINT64 addr; GUID svc, nchar[MAXNOTIFY], wchar; int nnotify, has_w, write_noresp; INT32 cache_mode;
+    void *device, *service, *notify[MAXNOTIFY], *write;
+    EventRegistrationToken tok[MAXNOTIFY];
+    HANDLE thread;
+    unsigned char q[QCAP][PKTMAX]; int qlen[QCAP], qwhich[QCAP], qhead, qtail, dropped;
+    char err[256], status[128];
+    ConnDelegate handler;
+    int used;
+} Conn;
+static Conn g_conns[MAXCONN];
 
 static BOOL CALLBACK init_once(PINIT_ONCE o, PVOID p, PVOID *c) { (void)o; (void)p; (void)c; InitializeCriticalSection(&g_lock); return TRUE; }
 static void init(void) { InitOnceExecuteOnce(&g_once, init_once, NULL, NULL); }
 static __thread int t_ro;
 static void ensure_ro(void) { if (!t_ro) { RoInitialize(RO_INIT_MULTITHREADED); t_ro = 1; } }
 
-static void set_status(const char *s) { EnterCriticalSection(&g_lock); snprintf(g_status, sizeof g_status, "%s", s); LeaveCriticalSection(&g_lock); }
 static void set_err(const char *what, HRESULT hr)
 {
     EnterCriticalSection(&g_lock);
     snprintf(g_err, sizeof g_err, "%s (0x%08lX)", what, (unsigned long)hr);
+    LeaveCriticalSection(&g_lock);
+}
+static void c_status(Conn *c, const char *s) { EnterCriticalSection(&g_lock); snprintf(c->status, sizeof c->status, "%s", s); LeaveCriticalSection(&g_lock); }
+static void c_err(Conn *c, const char *what, HRESULT hr)
+{
+    EnterCriticalSection(&g_lock);
+    snprintf(c->err, sizeof c->err, "%s (0x%08lX)", what, (unsigned long)hr);
     LeaveCriticalSection(&g_lock);
 }
 
@@ -165,7 +178,6 @@ static HRESULT op_ptr(void *op, DWORD ms, void **out) { *out = NULL; HRESULT hr 
 static HRESULT op_i32(void *op, DWORD ms, INT32 *out) { *out = -1; HRESULT hr = wait_op(op, ms); if (SUCCEEDED(hr)) hr = FN(op, OP_GETRESULTS, GETI32_T)(op, out); rel(op); return hr; }
 
 /* ---------- delegates (event handlers) ---------- */
-typedef struct { void **vtbl; const GUID *iid; } Delegate;
 static HRESULT WINAPI d_qi(void *self, REFIID iid, void **out)
 {
     Delegate *d = self;
@@ -224,10 +236,10 @@ static HRESULT WINAPI on_received(void *self, void *sender, void *args)
 
 static HRESULT WINAPI on_changed(void *self, void *sender, void *args)
 {
-    (void)self;
+    Conn *c = &g_conns[((ConnDelegate *)self)->conn];
     void *buf = NULL, *bba = NULL; UINT32 n = 0; BYTE *p = NULL; GUID id; int which = 0;
     if (SUCCEEDED(FN(sender, C_UUID, HRESULT (WINAPI *)(void *, GUID *))(sender, &id)))
-        for (int i = 0; i < g_nnotify; i++) if (IsEqualGUID(&id, &g_nchar[i])) { which = i; break; }
+        for (int i = 0; i < c->nnotify; i++) if (IsEqualGUID(&id, &c->nchar[i])) { which = i; break; }
     if (FAILED(FN(args, VC_VALUE, GETPTR_T)(args, &buf)) || !buf) return S_OK;
     FN(buf, B_LENGTH, GETU32_T)(buf, &n);
     if (SUCCEEDED(qi(buf, &IID_IBufferByteAccess_, &bba))) {
@@ -235,9 +247,9 @@ static HRESULT WINAPI on_changed(void *self, void *sender, void *args)
         if (p) {
             if (n > PKTMAX) n = PKTMAX;
             EnterCriticalSection(&g_lock);
-            int next = (g_qtail + 1) % QCAP;
-            if (next == g_qhead) g_dropped++;
-            else { memcpy(g_q[g_qtail], p, n); g_qlen[g_qtail] = (int)n; g_qwhich[g_qtail] = which; g_qtail = next; }
+            int next = (c->qtail + 1) % QCAP;
+            if (next == c->qhead) c->dropped++;
+            else { memcpy(c->q[c->qtail], p, n); c->qlen[c->qtail] = (int)n; c->qwhich[c->qtail] = which; c->qtail = next; }
             LeaveCriticalSection(&g_lock);
         }
         rel(bba);
@@ -249,12 +261,10 @@ static HRESULT WINAPI on_changed(void *self, void *sender, void *args)
 static void *recv_vtbl[] = { d_qi, d_addref, d_release, on_received };
 static void *change_vtbl[] = { d_qi, d_addref, d_release, on_changed };
 static Delegate g_recv_handler = { recv_vtbl, &IID_ReceivedHandler };
-static Delegate g_change_handler = { change_vtbl, &IID_ValueChangedHandler };
 
 /* ---------- scanning ---------- */
 API const char *sb_last_error(void) { return g_err; }
 API const char *sb_status_text(void) { return g_status; }
-API int sb_state(void) { return (int)g_state; }
 
 API int sb_scan_start(void)
 {
@@ -300,24 +310,24 @@ API int sb_scan_list(char *out, int outlen)
     return n;
 }
 
-/* ---------- connecting ---------- */
-static void release_conn(void)
+/* ---------- connecting (several connections, by handle 0..MAXCONN-1) ---------- */
+static void release_conn(Conn *c)
 {
-    for (int i = 0; i < MAXNOTIFY; i++) if (g_notify[i]) {
-        FN(g_notify[i], C_REMOVE_CHANGED, HRESULT (WINAPI *)(void *, EventRegistrationToken))(g_notify[i], g_change_tok[i]);
-        rel(g_notify[i]); g_notify[i] = NULL;
+    for (int i = 0; i < MAXNOTIFY; i++) if (c->notify[i]) {
+        FN(c->notify[i], C_REMOVE_CHANGED, HRESULT (WINAPI *)(void *, EventRegistrationToken))(c->notify[i], c->tok[i]);
+        rel(c->notify[i]); c->notify[i] = NULL;
     }
-    rel(g_write); g_write = NULL;
+    rel(c->write); c->write = NULL;
     void *cl;
-    if (g_service) { if (SUCCEEDED(qi(g_service, &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); } rel(g_service); g_service = NULL; }
-    if (g_device) { if (SUCCEEDED(qi(g_device, &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); } rel(g_device); g_device = NULL; }
+    if (c->service) { if (SUCCEEDED(qi(c->service, &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); } rel(c->service); c->service = NULL; }
+    if (c->device) { if (SUCCEEDED(qi(c->device, &IID_IClosable_, &cl))) { FN(cl, CL_CLOSE, HRESULT (WINAPI *)(void *))(cl); rel(cl); } rel(c->device); c->device = NULL; }
 }
 
-static HRESULT get_char(void *svc3, const GUID *uuid, void **out)
+static HRESULT get_char(Conn *c, void *svc3, const GUID *uuid, void **out)
 {
     void *op = NULL, *res = NULL, *vec = NULL; INT32 st = -1; UINT32 n = 0;
     *out = NULL;
-    HRESULT hr = FN(svc3, S3_CHARS_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(svc3, *uuid, g_cache_mode, &op);
+    HRESULT hr = FN(svc3, S3_CHARS_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(svc3, *uuid, c->cache_mode, &op);
     if (SUCCEEDED(hr)) hr = op_ptr(op, 10000, &res);
     if (FAILED(hr) || !res) return FAILED(hr) ? hr : E_FAIL;
     FN(res, CR_STATUS, GETI32_T)(res, &st);
@@ -338,180 +348,181 @@ static const char *gatt_status(INT32 st)
 
 static DWORD WINAPI connect_thread(LPVOID p)
 {
-    (void)p;
+    Conn *c = p;
     ensure_ro();
     HRESULT hr; void *statics = NULL, *op = NULL, *dev3 = NULL, *res = NULL, *vec = NULL, *svc3 = NULL;
     INT32 st = -1; UINT32 n = 0;
 
-    set_status("Opening device...");
+    c_status(c, "Opening device...");
     hr = factory(L"Windows.Devices.Bluetooth.BluetoothLEDevice", &IID_IBLEDeviceStatics, &statics);
-    if (SUCCEEDED(hr)) hr = FN(statics, DS_FROMADDRESS, HRESULT (WINAPI *)(void *, UINT64, void **))(statics, g_addr, &op);
+    if (SUCCEEDED(hr)) hr = FN(statics, DS_FROMADDRESS, HRESULT (WINAPI *)(void *, UINT64, void **))(statics, c->addr, &op);
     rel(statics);
-    if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &g_device);
-    if (FAILED(hr) || !g_device) { set_err("Couldn't open the device. Is it on and nearby?", FAILED(hr) ? hr : E_FAIL); goto fail; }
+    if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &c->device);
+    if (FAILED(hr) || !c->device) { c_err(c, "Couldn't open the device. Is it on and nearby?", FAILED(hr) ? hr : E_FAIL); goto fail; }
 
-    hr = qi(g_device, &IID_IBLEDevice3, &dev3);
-    if (FAILED(hr)) { set_err("Windows is too old (needs Windows 10 1703+)", hr); goto fail; }
+    hr = qi(c->device, &IID_IBLEDevice3, &dev3);
+    if (FAILED(hr)) { c_err(c, "Windows is too old (needs Windows 10 1703+)", hr); goto fail; }
 
     for (int attempt = 1; attempt <= 3; attempt++) {
         char msg[64]; snprintf(msg, sizeof msg, "Connecting and reading services (try %d of 3)...", attempt);
-        set_status(msg);
+        c_status(c, msg);
         op = NULL; res = NULL; st = -1;
-        hr = FN(dev3, D3_SERVICES_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(dev3, g_svc, attempt == 1 ? g_cache_mode : 1, &op);
+        hr = FN(dev3, D3_SERVICES_FOR_UUID_MODE, HRESULT (WINAPI *)(void *, GUID, INT32, void **))(dev3, c->svc, attempt == 1 ? c->cache_mode : 1, &op);
         if (SUCCEEDED(hr)) hr = op_ptr(op, 15000, &res);
         if (SUCCEEDED(hr) && res) {
             FN(res, SR_STATUS, GETI32_T)(res, &st);
             if (st == 0 && SUCCEEDED(FN(res, SR_SERVICES, GETPTR_T)(res, &vec)) && vec) {
                 FN(vec, VV_SIZE, GETU32_T)(vec, &n);
-                if (n > 0) FN(vec, VV_GETAT, HRESULT (WINAPI *)(void *, UINT32, void **))(vec, 0, &g_service);
+                if (n > 0) FN(vec, VV_GETAT, HRESULT (WINAPI *)(void *, UINT32, void **))(vec, 0, &c->service);
                 rel(vec); vec = NULL;
             }
             rel(res);
         }
-        if (g_service) break;
+        if (c->service) break;
         Sleep(1000);
     }
     rel(dev3);
-    if (!g_service) {
+    if (!c->service) {
         char m[160];
         if (FAILED(hr)) snprintf(m, sizeof m, "Couldn't read services. Close the phone app / turn phone Bluetooth off");
         else if (st != 0) snprintf(m, sizeof m, "Service lookup failed: %s. Close the phone app / turn phone Bluetooth off", gatt_status(st));
         else snprintf(m, sizeof m, "Device has no service with the requested UUID");
-        set_err(m, FAILED(hr) ? hr : (HRESULT)st);
+        c_err(c, m, FAILED(hr) ? hr : (HRESULT)st);
         goto fail;
     }
 
-    set_status("Finding characteristics...");
-    hr = qi(g_service, &IID_IGattDeviceService3, &svc3);
-    if (FAILED(hr)) { set_err("GATT service interface missing", hr); goto fail; }
-    for (int i = 0; i < g_nnotify; i++)
-        if (FAILED(hr = get_char(svc3, &g_nchar[i], &g_notify[i]))) { set_err("Notify characteristic not found", hr); rel(svc3); goto fail; }
-    if (g_has_w && FAILED(hr = get_char(svc3, &g_wchar, &g_write))) { set_err("Write characteristic not found", hr); rel(svc3); goto fail; }
+    c_status(c, "Finding characteristics...");
+    hr = qi(c->service, &IID_IGattDeviceService3, &svc3);
+    if (FAILED(hr)) { c_err(c, "GATT service interface missing", hr); goto fail; }
+    for (int i = 0; i < c->nnotify; i++)
+        if (FAILED(hr = get_char(c, svc3, &c->nchar[i], &c->notify[i]))) { c_err(c, "Notify characteristic not found", hr); rel(svc3); goto fail; }
+    if (c->has_w && FAILED(hr = get_char(c, svc3, &c->wchar, &c->write))) { c_err(c, "Write characteristic not found", hr); rel(svc3); goto fail; }
     rel(svc3);
 
-    if (g_write) {
+    if (c->write) {
         UINT32 props = 0;
-        FN(g_write, C_PROPS, GETU32_T)(g_write, &props);
-        g_write_noresp = (props & 0x4) != 0;
+        FN(c->write, C_PROPS, GETU32_T)(c->write, &props);
+        c->write_noresp = (props & 0x4) != 0;
     }
-    for (int i = 0; i < g_nnotify; i++) {
-        set_status("Subscribing to notifications...");
-        hr = FN(g_notify[i], C_ADD_CHANGED, HRESULT (WINAPI *)(void *, void *, EventRegistrationToken *))(g_notify[i], &g_change_handler, &g_change_tok[i]);
-        if (FAILED(hr)) { set_err("Couldn't attach notification handler", hr); goto fail; }
+    for (int i = 0; i < c->nnotify; i++) {
+        c_status(c, "Subscribing to notifications...");
+        hr = FN(c->notify[i], C_ADD_CHANGED, HRESULT (WINAPI *)(void *, void *, EventRegistrationToken *))(c->notify[i], &c->handler, &c->tok[i]);
+        if (FAILED(hr)) { c_err(c, "Couldn't attach notification handler", hr); goto fail; }
         UINT32 props = 0;
-        FN(g_notify[i], C_PROPS, GETU32_T)(g_notify[i], &props);
+        FN(c->notify[i], C_PROPS, GETU32_T)(c->notify[i], &props);
         INT32 cccd = (props & 0x10) ? 1 : 2; /* Notify, else Indicate */
         op = NULL; st = -1;
-        hr = FN(g_notify[i], C_WRITE_CCCD, HRESULT (WINAPI *)(void *, INT32, void **))(g_notify[i], cccd, &op);
+        hr = FN(c->notify[i], C_WRITE_CCCD, HRESULT (WINAPI *)(void *, INT32, void **))(c->notify[i], cccd, &op);
         if (SUCCEEDED(hr)) hr = op_i32(op, 10000, &st);
         if (FAILED(hr) || st != 0) {
             char m[96]; snprintf(m, sizeof m, "Subscribing failed: %s", FAILED(hr) ? "error" : gatt_status(st));
-            set_err(m, FAILED(hr) ? hr : (HRESULT)st); goto fail;
+            c_err(c, m, FAILED(hr) ? hr : (HRESULT)st); goto fail;
         }
     }
-    set_status("Connected");
-    InterlockedExchange(&g_state, 2);
+    c_status(c, "Connected");
+    InterlockedExchange(&c->state, 2);
     return 0;
 fail:
-    release_conn();
-    set_status("Failed");
-    InterlockedExchange(&g_state, -1);
+    release_conn(c);
+    c_status(c, "Failed");
+    InterlockedExchange(&c->state, -1);
     return 1;
 }
 
-API void sb_close(void)
+static Conn *conn_at(int h) { return (h >= 0 && h < MAXCONN && g_conns[h].used) ? &g_conns[h] : NULL; }
+
+API void sb_close_h(int h)
 {
     init(); ensure_ro();
-    if (g_thread) { WaitForSingleObject(g_thread, 20000); CloseHandle(g_thread); g_thread = NULL; }
-    release_conn();
+    Conn *c = conn_at(h);
+    if (!c) return;
+    if (c->thread) { WaitForSingleObject(c->thread, 20000); CloseHandle(c->thread); c->thread = NULL; }
+    release_conn(c);
     EnterCriticalSection(&g_lock);
-    g_qhead = g_qtail = g_dropped = 0;
+    c->qhead = c->qtail = c->dropped = 0;
+    c->used = 0;
     LeaveCriticalSection(&g_lock);
-    InterlockedExchange(&g_state, 0);
+    InterlockedExchange(&c->state, 0);
 }
 
-/* Start connecting in the background. addr is 12 hex digits; notify_uuids is a
- * comma-separated list (up to 4, may be empty). Poll sb_state(). */
-API int sb_open(const char *addr_hex, const char *service, const char *notify_uuid, const char *write_uuid)
+/* Start connecting in the background; returns a handle (0..7) or -1. addr is 12 hex digits,
+ * notify_uuids a comma-separated list (up to 4, may be empty). Poll sb_state_h(). */
+API int sb_open_h(const char *addr_hex, const char *service, const char *notify_uuid, const char *write_uuid, int uncached)
 {
     init(); ensure_ro();
-    sb_close();
-    g_err[0] = 0;
-    g_addr = strtoull(addr_hex, NULL, 16);
-    if (!g_addr || !parse_uuid(service, &g_svc)) { snprintf(g_err, sizeof g_err, "bad address or service uuid"); return -1; }
-    g_nnotify = 0;
+    int h = -1;
+    EnterCriticalSection(&g_lock);
+    for (int i = 0; i < MAXCONN; i++) if (!g_conns[i].used) { h = i; break; }
+    if (h >= 0) { memset(&g_conns[h], 0, sizeof g_conns[h]); g_conns[h].used = 1; }
+    LeaveCriticalSection(&g_lock);
+    if (h < 0) { snprintf(g_err, sizeof g_err, "too many devices connected (max %d)", MAXCONN); return -1; }
+    Conn *c = &g_conns[h];
+    c->handler.d.vtbl = change_vtbl; c->handler.d.iid = &IID_ValueChangedHandler; c->handler.conn = h;
+    c->cache_mode = uncached ? 1 : 0;
+    c->addr = strtoull(addr_hex, NULL, 16);
+    if (!c->addr || !parse_uuid(service, &c->svc)) { snprintf(g_err, sizeof g_err, "bad address or service uuid"); c->used = 0; return -1; }
     if (notify_uuid) {
         char list[256]; snprintf(list, sizeof list, "%s", notify_uuid);
-        for (char *t = strtok(list, ","); t && g_nnotify < MAXNOTIFY; t = strtok(NULL, ","))
-            if (*t && parse_uuid(t, &g_nchar[g_nnotify])) g_nnotify++;
+        for (char *t = strtok(list, ","); t && c->nnotify < MAXNOTIFY; t = strtok(NULL, ","))
+            if (*t && parse_uuid(t, &c->nchar[c->nnotify])) c->nnotify++;
     }
-    g_has_w = write_uuid && write_uuid[0] && parse_uuid(write_uuid, &g_wchar);
-    InterlockedExchange(&g_state, 1);
-    g_thread = CreateThread(NULL, 0, connect_thread, NULL, 0, NULL);
-    if (!g_thread) { InterlockedExchange(&g_state, -1); set_err("CreateThread", HRESULT_FROM_WIN32(GetLastError())); return -1; }
-    return 0;
+    c->has_w = write_uuid && write_uuid[0] && parse_uuid(write_uuid, &c->wchar);
+    InterlockedExchange(&c->state, 1);
+    c->thread = CreateThread(NULL, 0, connect_thread, c, 0, NULL);
+    if (!c->thread) { InterlockedExchange(&c->state, -1); c_err(c, "CreateThread", HRESULT_FROM_WIN32(GetLastError())); }
+    return h;
 }
 
-API int sb_write(const unsigned char *data, int len)
+API int sb_state_h(int h) { Conn *c = conn_at(h); return c ? (int)c->state : 0; }
+API const char *sb_error_h(int h) { Conn *c = conn_at(h); return c ? c->err : "no such connection"; }
+API const char *sb_status_h(int h) { Conn *c = conn_at(h); return c ? c->status : ""; }
+API int sb_dropped_h(int h) { Conn *c = conn_at(h); return c ? c->dropped : 0; }
+
+API int sb_write_h(int h, const unsigned char *data, int len)
 {
     ensure_ro();
-    if (g_state != 2 || !g_write) { snprintf(g_err, sizeof g_err, "not connected"); return -1; }
+    Conn *c = conn_at(h);
+    if (!c || c->state != 2 || !c->write) { if (c) snprintf(c->err, sizeof c->err, "not connected"); return -1; }
     if (len <= 0 || len > PKTMAX) return -2;
     HRESULT hr = S_OK;
+    EnterCriticalSection(&g_lock);
     if (!g_buffactory) hr = factory(L"Windows.Storage.Streams.Buffer", &IID_IBufferFactory_, &g_buffactory);
-    if (FAILED(hr)) { set_err("Buffer factory", hr); return -3; }
+    LeaveCriticalSection(&g_lock);
+    if (FAILED(hr)) { c_err(c, "Buffer factory", hr); return -3; }
     void *buf = NULL, *bba = NULL, *op = NULL; BYTE *p = NULL; INT32 st = -1;
     hr = FN(g_buffactory, BF_CREATE, HRESULT (WINAPI *)(void *, UINT32, void **))(g_buffactory, (UINT32)len, &buf);
-    if (FAILED(hr)) { set_err("Buffer create", hr); return -3; }
+    if (FAILED(hr)) { c_err(c, "Buffer create", hr); return -3; }
     if (SUCCEEDED(qi(buf, &IID_IBufferByteAccess_, &bba))) { FN(bba, BBA_BUFFER, HRESULT (WINAPI *)(void *, BYTE **))(bba, &p); if (p) memcpy(p, data, len); rel(bba); }
     FN(buf, B_PUT_LENGTH, HRESULT (WINAPI *)(void *, UINT32))(buf, (UINT32)len);
-    hr = FN(g_write, C_WRITE_OPT, HRESULT (WINAPI *)(void *, void *, INT32, void **))(g_write, buf, g_write_noresp ? 1 : 0, &op);
+    hr = FN(c->write, C_WRITE_OPT, HRESULT (WINAPI *)(void *, void *, INT32, void **))(c->write, buf, c->write_noresp ? 1 : 0, &op);
     rel(buf);
     if (SUCCEEDED(hr)) hr = op_i32(op, 2000, &st);
     if (FAILED(hr) || st != 0) {
         char m[64]; snprintf(m, sizeof m, "Write failed: %s", FAILED(hr) ? "error" : gatt_status(st));
-        set_err(m, FAILED(hr) ? hr : (HRESULT)st);
+        c_err(c, m, FAILED(hr) ? hr : (HRESULT)st);
         return -4;
     }
     return 0;
 }
 
-/* Pop one queued notification. Returns its length, 0 if none. */
-API int sb_read(unsigned char *buf, int maxlen)
+/* Pop one queued notification of connection h; returns its length (0 if none) and which
+ * notify characteristic (index into the sb_open_h list) it came from. */
+API int sb_read_h(int h, unsigned char *buf, int maxlen, int *which)
 {
     init();
+    Conn *c = conn_at(h);
+    if (!c) return 0;
     int n = 0;
     EnterCriticalSection(&g_lock);
-    if (g_qhead != g_qtail) {
-        n = g_qlen[g_qhead] < maxlen ? g_qlen[g_qhead] : maxlen;
-        memcpy(buf, g_q[g_qhead], n);
-        g_qhead = (g_qhead + 1) % QCAP;
+    if (c->qhead != c->qtail) {
+        n = c->qlen[c->qhead] < maxlen ? c->qlen[c->qhead] : maxlen;
+        memcpy(buf, c->q[c->qhead], n);
+        if (which) *which = c->qwhich[c->qhead];
+        c->qhead = (c->qhead + 1) % QCAP;
     }
     LeaveCriticalSection(&g_lock);
     return n;
 }
-
-/* Like sb_read, also returns which notify characteristic (index into the
- * sb_open list) the packet came from. */
-API int sb_read_ex(unsigned char *buf, int maxlen, int *which)
-{
-    init();
-    int n = 0;
-    EnterCriticalSection(&g_lock);
-    if (g_qhead != g_qtail) {
-        n = g_qlen[g_qhead] < maxlen ? g_qlen[g_qhead] : maxlen;
-        memcpy(buf, g_q[g_qhead], n);
-        if (which) *which = g_qwhich[g_qhead];
-        g_qhead = (g_qhead + 1) % QCAP;
-    }
-    LeaveCriticalSection(&g_lock);
-    return n;
-}
-
-API int sb_dropped(void) { return g_dropped; }
-
-/* 0 = use Windows' cached services (fast reconnect), 1 = always read from the device. */
-API void sb_set_cache_mode(int uncached) { g_cache_mode = uncached ? 1 : 0; }
 
 /* ---------- device explorer (read-only) ----------
  * Lists every service and characteristic of a device, reads the readable ones,

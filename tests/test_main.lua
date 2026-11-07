@@ -38,33 +38,38 @@ love = {
 local function put(buf, max, s) local n = math.min(#s, max - 1); ffi.copy(buf, s, n); buf[n] = 0; return n end
 local function hexb(h) local t = {} for x in h:gmatch("%x%x") do t[#t + 1] = tonumber(x, 16) end return t end
 local PEDAL = hexb("FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00")
-local fake = { state = 0, explore = 0, writes = {}, pedalling = true, drop_at = nil }
+local fake = { explore = 0, writes = {}, pedalling = true, crank = true, conns = {} }
 local U = function(id) return "0000" .. id .. "-0000-1000-8000-00805f9b34fb" end
-local EXPLORE = table.concat({ "service " .. U("1826"), "char " .. U("2acc") .. " props 2", "char " .. U("2ad2") .. " props 10",
-  "char " .. U("2ad9") .. " props 28", "listening 500" }, "\n") .. "\n"
-local queue = {}
+local EXPLORE = {
+  AABBCCDDEEFF = { "service " .. U("1826"), "char " .. U("2acc") .. " props 2", "char " .. U("2ad2") .. " props 10",
+    "char " .. U("2ad9") .. " props 28", "listening 500" },
+  ["778899AABBCC"] = { "service " .. U("1816"), "char " .. U("2a5b") .. " props 16", "listening 500" },
+}
 local lib = {
   sb_last_error = function() return "fake error" end,
   sb_status_text = function() return "" end,
-  sb_state = function() return fake.state end,
   sb_scan_start = function() return 0 end,
   sb_scan_stop = noop,
-  sb_scan_list = function(buf, max) return put(buf, max, "HT2405118\tAABBCCDDEEFF\t-60\t100\t1\nTV\t112233445566\t-80\t100\t0\n") end,
-  sb_open = function() fake.state, fake.open_t = 1, clock; return 0 end,
-  sb_write = function(buf, n) local t = {} for i = 0, n - 1 do t[#t + 1] = buf[i] end fake.writes[#fake.writes + 1] = t; return 0 end,
-  sb_read_ex = function(buf, max, which)
-    local p = table.remove(queue, 1)
+  sb_scan_list = function(buf, max) return put(buf, max,
+    "HT2405118\tAABBCCDDEEFF\t-60\t100\t1\nROCKBROS C\t778899AABBCC\t-55\t100\t4\nTV\t112233445566\t-80\t100\t0\n") end,
+  sb_open_h = function(addr) local h = #fake.conns fake.conns[h + 1] = { addr = ffi.string(addr), state = 1, open_t = clock, q = {} } return h end,
+  sb_state_h = function(h) local c = fake.conns[h + 1] return c and c.state or 0 end,
+  sb_error_h = function() return "fake error" end,
+  sb_status_h = function() return "" end,
+  sb_dropped_h = function() return 0 end,
+  sb_write_h = function(h, buf, n) local t = {} for i = 0, n - 1 do t[#t + 1] = buf[i] end fake.writes[#fake.writes + 1] = t; return 0 end,
+  sb_read_h = function(h, buf, max, which)
+    local c = fake.conns[h + 1]
+    local p = c and table.remove(c.q, 1)
     if not p then return 0 end
     for i = 1, #p do buf[i - 1] = p[i] end
     which[0] = 0
     return #p
   end,
-  sb_dropped = function() return 0 end,
-  sb_close = function() fake.state = 0 end,
-  sb_set_cache_mode = noop,
-  sb_explore = function() fake.explore, fake.ex_t = 1, clock; return 0 end,
+  sb_close_h = function(h) local c = fake.conns[h + 1] if c then c.state = 0 end end,
+  sb_explore = function(addr) fake.explore, fake.ex_t, fake.ex_addr = 1, clock, ffi.string(addr); return 0 end,
   sb_explore_state = function() if fake.explore == 1 and clock - fake.ex_t > 0.6 then fake.explore = 2 end return fake.explore end,
-  sb_explore_text = function(buf, max) return put(buf, max, EXPLORE) end,
+  sb_explore_text = function(buf, max) return put(buf, max, table.concat(EXPLORE[fake.ex_addr], "\n") .. "\n") end,
 }
 package.loaded["ble"] = { load = function() return lib end }
 
@@ -79,8 +84,16 @@ local frame = 0
 local function step(dt)
   clock = clock + dt
   frame = frame + 1
-  if fake.state == 1 and clock - fake.open_t > 0.5 then fake.state = 2 end
-  if fake.state == 2 and fake.pedalling and frame % 4 == 0 then queue[#queue + 1] = PEDAL end
+  for _, c in ipairs(fake.conns) do
+    if c.state == 1 and clock - c.open_t > 0.5 then c.state = 2 end
+    if c.state == 2 and c.addr == "AABBCCDDEEFF" and fake.pedalling and frame % 4 == 0 then c.q[#c.q + 1] = PEDAL end
+    -- cadence sensor: 90 rpm while the crank turns; a packet every second either way
+    if c.state == 2 and c.addr == "778899AABBCC" and frame % 20 == 0 then
+      if fake.crank then fake.revs = (fake.revs or 0) + 1.5 fake.ctime = (fake.ctime or 0) + 1024 end
+      local r, t = math.floor(fake.revs or 0) % 65536, math.floor((fake.ctime or 0) * (math.floor(fake.revs or 0) / math.max(1, fake.revs or 1))) % 65536
+      c.q[#c.q + 1] = { 2, r % 256, math.floor(r / 256), t % 256, math.floor(t / 256) }
+    end
+  end
   T.set_tab(tabs[frame % 4 + 1])
   love.update(dt)
   love.draw()
@@ -89,7 +102,11 @@ local function run(s) for _ = 1, s * 20 do step(0.05) end end
 
 run(1)
 local list = T.nearby()
-assert(#list == 2 and list[1].name == "HT2405118" and list[1].fitness, "bike should be listed first")
+assert(#list == 3 and list[1].fitness and list[2].fitness and not list[3].fitness, "fitness devices should be listed first")
+table.sort(list, function(a, b) return a.name < b.name end)
+local bike_entry, sensor_entry = list[1], list[2]
+assert(bike_entry.name == "HT2405118" and sensor_entry.name == "ROCKBROS C")
+list = { bike_entry }
 T.add_device(list[1])
 run(3)
 local saved = T.saved()
@@ -97,6 +114,22 @@ assert(#saved.devices == 1 and saved.devices[1].kind == "ftms_bike", "bike shoul
 local devices = require("devices")
 assert(devices.state == "connected", "should be connected, is " .. devices.state)
 assert(devices.m.cadence and devices.m.cadence > 0, "should decode cadence")
+
+-- add the cadence sensor too: both stay connected, the sensor decides moving / cadence
+T.add_device(sensor_entry)
+run(5)
+saved = T.saved()
+assert(#saved.devices == 2 and saved.devices[2].kind == "csc", "sensor should be added as a cadence sensor")
+assert(devices.state_of(saved.devices[1]) == "connected" and devices.state_of(saved.devices[2]) == "connected", "both connected")
+assert(devices.m.sources.moving == "sensor" and devices.m.moving, "moving should come from the sensor")
+print(string.format("bike + sensor: %.1f km/h from the bike, %d rpm from the sensor", devices.m.speed_kmh, devices.m.cadence))
+assert(math.abs(devices.m.cadence - 90) < 3, "sensor cadence ~90 rpm, got " .. devices.m.cadence)
+fake.crank = false
+run(2.5)
+assert(not devices.m.moving and devices.m.cadence == 0, "crank stopped -> still within ~2 s, though the bike still sends")
+fake.crank = true
+run(2)
+assert(devices.m.moving, "pedalling again")
 
 -- a game connects over the mod API and asks for a hill; it must reach the bike as FTMS simulation (0x11)
 local socket = require("socket")
@@ -136,6 +169,7 @@ assert(f, "FIT file should exist"); f:close()
 run(1) -- draw history with the saved session
 -- camera only: no Bluetooth device, the camera page drives speed (cycling 90 rpm ~ 29 km/h)
 devices.disconnect()
+run(0.1)
 local api2 = require("api")
 for _ = 1, 40 do api2.camera = { moving = true, cadence = 90, fps = 30, activity = "cycling", t = api2.now() } run(0.05) end
 local st = require("json").decode(api2.last_state)

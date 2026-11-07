@@ -67,10 +67,14 @@ end
 local function find_saved(addr) for i, d in ipairs(saved.devices) do if d.addr == addr then return d, i end end end
 
 local function connect_saved(d)
-  set_scanning(false)
-  saved.last = d.addr
+  d.auto = true -- connect again next time OmniPlay starts
   save_devices()
   devices.connect(d)
+end
+local function disconnect_saved(d)
+  d.auto = false
+  save_devices()
+  devices.disconnect(d)
 end
 
 local function add_device(n)
@@ -90,7 +94,8 @@ end
 
 local function start_explore(n)
   set_scanning(false)
-  if devices.state ~= "idle" then devices.disconnect() end
+  local known = find_saved(n.addr)
+  if known then devices.disconnect(known) end
   if ble.sb_explore(n.addr, 10000) ~= 0 then add_log("err", "couldn't start the explorer"); return end
   ex = { running = true, lines = nil, raw = "", name = n.name, t = 0 }
   add_log("info", "exploring " .. n.name)
@@ -134,8 +139,16 @@ function love.load()
   api.init(add_log, api_opts)
   if not ble then return end
   devices.init(ble, add_log)
-  local last = saved.last and find_saved(saved.last)
-  if last then add_log("info", "connecting to " .. last.name); connect_saved(last) else set_scanning(true) end
+  -- connect every device you had connected last time; they all run side by side
+  local any = false
+  for _, d in ipairs(saved.devices) do
+    if d.auto or (d.auto == nil and saved.last == d.addr) then
+      add_log("info", "connecting to " .. d.name)
+      devices.connect(d)
+      any = true
+    end
+  end
+  if not any then set_scanning(true) end
 end
 
 function love.update(dt)
@@ -151,8 +164,11 @@ function love.update(dt)
     dev_cad = real and m.cadence or nil
     local mm = {}
     if real then for k, v in pairs(m) do mm[k] = v end end
-    mm.moving = cam.moving
-    if cam.moving and cam.cadence > 0 then mm.cadence = cam.cadence elseif not cam.moving then mm.cadence = 0 end
+    -- a cadence sensor beats the camera; the camera beats the bike's console
+    if not (mm.sources and mm.sources.cadence == "sensor") then
+      mm.moving = cam.moving
+      if cam.moving and cam.cadence > 0 then mm.cadence = cam.cadence elseif not cam.moving then mm.cadence = 0 end
+    end
     if not real then
       local c = cam.moving and cam.cadence or 0
       mm.speed_kmh = cam.activity == "cycling" and c * 0.32 or (cam.activity == "walking" and c * 0.045 or c * 0.066)
@@ -160,6 +176,8 @@ function love.update(dt)
     end
     m, extra_cam = mm, true
   end
+  -- a cadence sensor also makes start / stop instant, like the camera
+  if m.sources and m.sources.moving == "sensor" then extra_cam = true end
   live_m, live_dev = m, d
   session.game = api.game_name() or (output.profile and output.profile.name)
   session.update(dt, m, d)
@@ -180,8 +198,8 @@ function love.update(dt)
     end
     if st == 2 or st == -1 then ex.running = false; add_log("info", "explorer done: " .. explore.summary_text(ex.summary or {})) end
   end
-  local want_scan = tab == "Devices" and devices.state ~= "detecting" and not ex.running
-    or (devices.state == "idle" and not ex.running)
+  local want_scan = tab == "Devices" and not devices.detecting and not ex.running
+    or (not devices.any_connected() and not ex.running)
   set_scanning(want_scan)
   if scanning then scan_t = scan_t + dt; if scan_t > 0.5 then scan_t = 0; refresh_nearby() end end
 end
@@ -209,7 +227,7 @@ function love.quit()
   api.shutdown()
   output.release_all()
   if session.cur then session.finish() end
-  if devices.state ~= "idle" then devices.disconnect() end
+  devices.disconnect()
   if ble then ble.sb_scan_stop() end
   save_devices()
 end
@@ -226,22 +244,25 @@ local function device_line(x, y, w)
       cam.activity == "cycling" and "rpm" or "steps/min", cam.fps)
     ui.text(t, x + w - 470, y + 25, C.accent, "small", 350, "right")
   end
-  if not d then
+  local list = {}
+  for _, dv in ipairs(saved.devices) do if devices.conn(dv) then list[#list + 1] = dv end end
+  if #list == 0 then
     if cam then ui.text("Camera only  ·  " .. cam.activity, x + 14, y + 14, C.text) return end
     ui.text("No device connected. Add one on the Devices tab.", x + 14, y + 14, C.muted)
     return
   end
-  local st = devices.state
-  local col = st == "connected" and C.accent or (st == "idle" and C.muted or C.warn)
-  love.graphics.setColor(col); love.graphics.circle("fill", x + 18, y + 23, 5)
-  ui.text(d.name .. "  ·  " .. devices.KINDS[d.kind].label, x + 32, y + 6, C.text)
-  local sub = st == "connected" and (devices.hint or "connected") or (devices.hint or st)
-  ui.text(sub, x + 32, y + 25, devices.hint and C.warn or C.muted, "small")
-  if st == "idle" then
-    if ui.button("Connect", x + w - 110, y + 6, 98, 34, "secondary") then connect_saved(d) end
-  else
-    if ui.button("Disconnect", x + w - 110, y + 6, 98, 34, "secondary") then devices.disconnect() end
+  -- one dot per device: lime connected, amber connecting / reconnecting
+  local dx = x + 14
+  for _, dv in ipairs(list) do
+    local st = devices.state_of(dv)
+    love.graphics.setColor(st == "connected" and C.accent or C.warn)
+    love.graphics.circle("fill", dx + 4, y + 15, 5)
+    ui.text(dv.name, dx + 14, y + 6, C.text, "small")
+    dx = dx + 24 + ui.width(dv.name, "small") + 14
   end
+  local hint
+  for _, dv in ipairs(list) do hint = hint or devices.hint_of(dv) end
+  ui.text(hint or "all connected", x + 14, y + 26, hint and C.warn or C.muted, "small")
 end
 
 local function draw_session(x, y, w, h)
@@ -374,14 +395,23 @@ local function draw_devices(x, y, w, h)
   if #saved.devices == 0 then ui.text("None yet. Add one from the list below.", x, y + 4, C.soft); y = y + 34 end
   local remove
   for i, d in ipairs(saved.devices) do
-    local active = devices.dev == d
+    local st = devices.state_of(d)
+    local active = st ~= "idle"
     local bh = (d.kind == "ftms_bike" or d.kind == "sperax" or d.kind == "ftms_treadmill") and 132 or 90
     ui.rect(x, y, w, bh, C.panel)
     ui.text(d.name, x + 14, y + 10, C.text, "mid")
-    ui.text(devices.KINDS[d.kind].label .. "  ·  " .. d.addr .. (active and ("  ·  " .. devices.state) or ""),
-      x + 14, y + 34, C.muted, "small")
-    if active and devices.state ~= "idle" then
-      if ui.button("Disconnect", x + w - 220, y + 10, 100, 32, "secondary") then devices.disconnect() end
+    local dm = devices.metrics_of(d)
+    local live = ""
+    if st == "connected" and dm then
+      if d.kind == "csc" then live = string.format("  ·  %d rpm, %s", dm.cadence or 0, dm.moving and "moving" or "still")
+      elseif d.kind == "hr" then live = string.format("  ·  %d bpm", dm.hr or 0)
+      else live = string.format("  ·  %.1f km/h, %d %s%s", dm.speed_kmh or 0, dm.cadence or 0, d.kind == "ftms_bike" and "rpm" or "spm",
+        dm.power and string.format(", %d W", dm.power) or "") end
+    end
+    ui.text(devices.KINDS[d.kind].label .. "  ·  " .. (active and (devices.hint_of(d) or st) or "not connected") .. live,
+      x + 14, y + 34, st == "connected" and C.accent or C.muted, "small")
+    if active then
+      if ui.button("Disconnect", x + w - 220, y + 10, 100, 32, "secondary") then disconnect_saved(d) end
     else
       if ui.button("Connect", x + w - 220, y + 10, 100, 32, "primary") then connect_saved(d) end
     end
@@ -400,7 +430,7 @@ local function draw_devices(x, y, w, h)
     y = y + bh + 10
   end
   if remove then
-    if devices.dev == saved.devices[remove] then devices.disconnect(); devices.dev = nil end
+    devices.disconnect(saved.devices[remove])
     table.remove(saved.devices, remove); save_devices()
   end
   save_devices()
@@ -428,7 +458,7 @@ local function draw_devices(x, y, w, h)
     ui.rect(x, y, w, 40, C.panel)
     ui.text(n.name, x + 14, y + 11, n.fitness and C.text or C.muted)
     ui.text(string.format("%s   %d dBm", n.tags ~= "" and n.tags or "no fitness services", n.rssi), x + 260, y + 13, C.muted, "small")
-    if not known and n.fitness and devices.state ~= "detecting" then
+    if not known and n.fitness and not devices.detecting then
       if ui.button("Add", x + w - 200, y + 4, 90, 32, "primary") then add_device(n) end
     end
     if ui.button("Explore", x + w - 100, y + 4, 90, 32, "secondary") then start_explore(n) end
