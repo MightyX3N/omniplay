@@ -73,7 +73,10 @@ local lib = {
     -- the fake treadmill follows speed commands like a real one
     if t.addr == "CCDDEEFF0011" and t[1] == 0x02 then fake.belt = (t[2] + t[3] * 256) / 100 end
     -- Sperax speed command F5 .. 15 01 <kmh*10> ..: the pad's belt moves toward it at its own pace
-    if t.addr == "5A5A5A5A5A5A" and t[4] == 0x15 and t[5] == 0x01 then fake.sp_cmd = t[6] / 10 end
+    if t.addr == "5A5A5A5A5A5A" and t[4] == 0x15 and t[5] == 0x01 then
+      -- a real pad sometimes ignores a command: drop some, the app must send them again
+      if (fake.sp_drop or 0) > 0 and t[6] >= 20 then fake.sp_drop = fake.sp_drop - 1 else fake.sp_cmd = t[6] / 10 end
+    end
     if t.addr == "CCDDEEFF0011" and t[1] == 0x03 then fake.incline_set = (t[2] + t[3] * 256) / 10 end
     return 0
   end,
@@ -295,8 +298,8 @@ rt.walk = 4
 rt.ride = { r = r, pos = 100, climbed = 0 } -- flat part
 run(3)
 assert(not fake.sp_cmd, "stopped pad: no speed commands")
-fake.sp_on, fake.sp_speed = true, 0.3
-run(40)
+fake.sp_on, fake.sp_speed, fake.sp_drop = true, 0.3, 4
+run(50)
 assert(math.abs(fake.sp_speed - 4) < 0.15, string.format("pad should reach 4 km/h by itself, at %.2f", fake.sp_speed))
 assert(math.abs(rt.walk - 4) < 0.05, "slow start must not change the pace, got " .. rt.walk)
 print(string.format("sperax: started at 0.3, route took it to %.1f km/h", fake.sp_speed))

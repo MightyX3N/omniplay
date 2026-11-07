@@ -219,17 +219,15 @@ function love.update(dt)
         -- actually reached our last command and then left it, so a slow start or a lagging pad isn't mistaken for you.
         local cmd = pad.belt_cmd
         local v_now = pad.m.speed_kmh or 0
-        if cmd ~= rr.seen_cmd then rr.seen_cmd, rr.reached = cmd, false end
-        if cmd and math.abs(v_now - cmd) < 0.15 then rr.reached = true end
-        if moving and rr.reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
+        if moving and pad.cmd_reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
           rr.manual_t = (rr.manual_t or 0) + dt
           if rr.manual_t > 2.5 then
             rt.walk = math.max(lo, math.min(hi, pad.m.speed_kmh / route.walk_factor(here.g, rt.strength)))
             rt.walk = math.floor(rt.walk * 10 + 0.5) / 10
             save_rt(); rr.manual_t = 0
             want = speed_at(here.g)
-            pad.belt_cmd, pad.belt_target = pad.m.speed_kmh, pad.m.speed_kmh
-            rr.seen_cmd, rr.reached = pad.belt_cmd, true
+            pad.belt_cmd, pad.belt_target, pad.cmd_reached = pad.m.speed_kmh, pad.m.speed_kmh, true
+            devices.trace_line(pad, string.format("remote change: new flat pace %.1f", rt.walk))
             add_log("info", string.format("new walking pace from the remote: %.1f km/h on the flat", rt.walk))
           end
         else rr.manual_t = 0 end

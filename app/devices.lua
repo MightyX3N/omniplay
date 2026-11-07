@@ -134,15 +134,27 @@ local function trace(c, d)
   if M.trace then M.trace:write(string.format("%.2f %s %s\n", now(), c.dev.kind, key)) M.trace:flush() end
 end
 
+-- free-form trace line (Sperax speed commands, pad replies) into the same file
+local function trace_line(c, text)
+  if M.trace == nil then trace(c, { speed_kmh = "-", cadence = "-", power = "-" }) end
+  if M.trace then M.trace:write(string.format("%.2f %s %s\n", now(), c.dev.kind, text)) M.trace:flush() end
+end
+M.trace_line = trace_line
+
 local function handle(c, which_char, b)
   local m, kind = c.m, c.dev.kind
   if kind == "sperax" then
     for _, f in ipairs(sperax.feed(c.reader, b)) do
+      if f.cmd ~= 0x19 then trace_line(c, "reply " .. sperax.hex(f.b) .. (f.crc_ok and "" or " (bad crc)")) end
       if f.cmd == 0x19 and f.crc_ok then
         local s = sperax.decode_status(f)
         if s then
           c.last_packet = now()
+          if s.state ~= m.state or s.speed_kmh ~= m.speed_kmh then
+            trace_line(c, string.format("status %s %.1f km/h", s.state, s.speed_kmh))
+          end
           m.speed_kmh, m.steps, m.state = s.speed_kmh, s.steps, s.state
+          if c.belt_cmd and math.abs(s.speed_kmh - c.belt_cmd) < 0.15 then c.cmd_reached = true end
           m.device_distance_m, m.device_seconds = s.distance_m, s.seconds
           local hist = c.step_hist
           hist[#hist + 1] = { t = now(), steps = s.steps }
@@ -178,6 +190,7 @@ local function handle(c, which_char, b)
       local d = kind == "ftms_bike" and ftms.indoor_bike(b) or ftms.treadmill(b)
       for k, v in pairs(d) do m[k] = v end
       trace(c, d)
+      if c.belt_cmd and d.speed_kmh and math.abs(d.speed_kmh - c.belt_cmd) < 0.15 then c.cmd_reached = true end
       if kind == "ftms_bike" then m.moving = (m.cadence or 0) > 5 or (m.power or 0) > 0
       else m.moving = (m.speed_kmh or 0) > 0.3 end
       if m.moving then c.hint = nil; c.start_tries = 99 end
@@ -236,22 +249,41 @@ local function update_conn(c, dt)
       else c.hint = "No data yet. If the numbers stay at 0 while you pedal, press Start on the bike's console." end
     end
   end
-  -- belt speed ramp
+  -- belt speed ramp: one command a second at most; a command only counts once it really went out,
+  -- and if the belt doesn't follow within 3 s it is sent again (up to 3 times)
   if c.belt_target then
     c.belt_t = (c.belt_t or 0) + dt
-    if c.belt_t >= 0.5 then
-      local cur = c.belt_cmd or c.m.speed_kmh or 0
-      local step = (c.belt_ramp or BELT_RAMP) * c.belt_t
-      local nxt = c.belt_target > cur and math.min(c.belt_target, cur + step) or math.max(c.belt_target, cur - step)
-      c.belt_t = 0
-      if not c.belt_cmd or math.abs(nxt - c.belt_cmd) >= 0.1 then
-        -- only count a command as sent when it really went out (a Sperax ignores it unless running)
-        if kind == "sperax" and c.m.state == "running" then
-          write(c, sperax.encode({ 0x15, 0x01, math.floor(nxt * 10 + 0.5), 0x00 }))
-          c.belt_cmd, c.belt_cmd_t = nxt, now()
-        elseif kind == "ftms_treadmill" then
-          write(c, ftms.target_speed(nxt))
-          c.belt_cmd, c.belt_cmd_t = nxt, now()
+    if c.belt_t >= 1.0 then
+      local ready = kind == "ftms_treadmill" or (kind == "sperax" and c.m.state == "running")
+      if not ready then
+        c.belt_t = 0
+        if kind == "sperax" then c.belt_cmd = nil end -- a stopped pad starts over from its real speed
+      else
+        local lo = M.min_belt(kind)
+        local cur = c.belt_cmd or math.max(lo, c.m.speed_kmh or 0)
+        local step = (c.belt_ramp or BELT_RAMP) * c.belt_t
+        local nxt = c.belt_target > cur and math.min(c.belt_target, cur + step) or math.max(c.belt_target, cur - step)
+        nxt = math.max(lo, nxt)
+        -- the belt is behind the last command: wait for it instead of running further ahead
+        if c.belt_cmd and not c.cmd_reached and math.abs((c.m.speed_kmh or 0) - c.belt_cmd) > 0.3 then nxt = c.belt_cmd end
+        c.belt_t = 0
+        -- sent three times and still not followed: carry on from where the belt really is
+        if c.belt_cmd and not c.cmd_reached and (c.resends or 0) >= 3 and now() - (c.belt_cmd_t or 0) > 3 then
+          trace_line(c, string.format("pad didn't follow %.1f, carrying on from %.1f", c.belt_cmd, c.m.speed_kmh or 0))
+          c.belt_cmd, c.cmd_reached, c.resends = math.max(lo, c.m.speed_kmh or 0), true, 0
+          nxt = c.belt_target > c.belt_cmd and math.min(c.belt_target, c.belt_cmd + step) or math.max(c.belt_target, c.belt_cmd - step)
+        end
+        local resend = c.belt_cmd and not c.cmd_reached and now() - (c.belt_cmd_t or 0) > 3 and (c.resends or 0) < 3
+        if not c.belt_cmd or math.abs(nxt - c.belt_cmd) >= 0.1 or resend then
+          if resend and math.abs(nxt - c.belt_cmd) < 0.1 then nxt = c.belt_cmd; c.resends = (c.resends or 0) + 1 else c.resends = 0 end
+          local bytes = kind == "sperax" and sperax.encode({ 0x15, 0x01, math.floor(nxt * 10 + 0.5), 0x00 }) or ftms.target_speed(nxt)
+          local ok = write(c, bytes)
+          trace_line(c, string.format("cmd %.1f km/h%s %s (belt %.1f)", nxt, resend and " again" or "", ok and "sent" or "FAILED", c.m.speed_kmh or 0))
+          if ok then
+            if c.belt_cmd ~= nxt then c.cmd_reached = false end
+            c.belt_cmd, c.belt_cmd_t = nxt, now()
+            if math.abs((c.m.speed_kmh or 0) - nxt) < 0.15 then c.cmd_reached = true end
+          end
         end
       end
     end
