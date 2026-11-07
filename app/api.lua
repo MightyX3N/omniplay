@@ -113,15 +113,23 @@ local function game(id, via)
   return g
 end
 
-local function apply(g, msg)
+local function apply(g, msg, c)
   if type(msg) ~= "table" then return end
   g.seen = M.now()
   -- the camera page (served by OmniPlay itself) sends its rhythm here
   if type(msg.camera) == "table" then
     local cm = msg.camera
     if not M.camera or M.now() - M.camera.t > 3 then M.log("info", "camera connected") end
+    local prev = M.camera or {}
     M.camera = { moving = cm.moving == true, cadence = tonumber(cm.cadence) or 0, fps = tonumber(cm.fps) or 0,
-      activity = (cm.activity == "walking" or cm.activity == "running") and cm.activity or "cycling", t = M.now() }
+      activity = (cm.activity == "walking" or cm.activity == "running") and cm.activity or "cycling", t = M.now(),
+      mult = tonumber(cm.mult) or 1, energy = tonumber(cm.energy) or 0, facing = cm.facing,
+      box = type(cm.box) == "table" and cm.box or prev.box,
+      preview = prev.preview, preview_seq = prev.preview_seq or 0, phone = c and c.phone }
+    if type(cm.preview) == "string" and #cm.preview < 60000 then
+      M.camera.preview, M.camera.preview_seq = cm.preview, M.camera.preview_seq + 1
+    end
+    if c then M.camera_client = c end
     return
   end
   local name = msg.game or msg.name
@@ -283,8 +291,8 @@ local function handle_ws(c)
         local msg = json.decode(c.frag)
         c.frag = nil
         if msg and c.phone then
-          if type(msg.camera) == "table" and msg.k == M.token then apply(game(c.id, "websocket"), { camera = msg.camera }) end
-        elseif msg then apply(game(c.id, "websocket"), msg) end
+          if type(msg.camera) == "table" and msg.k == M.token then apply(game(c.id, "websocket"), { camera = msg.camera }, c) end
+        elseif msg then apply(game(c.id, "websocket"), msg, c) end
       end
     end
   end
@@ -411,6 +419,8 @@ function M.update(dt, m, dev, devstate, ctl, extra)
   local target = a and a.grade
   if target then target = math.max(-10, math.min(20, target)) end
   M.grade_target = target
+  -- a route ride sets M.route_grade; a connected game's hill always wins
+  if not target and M.route_grade then target = math.max(-10, math.min(20, M.route_grade)) end
   if target or (M.grade and M.grade ~= 0) then
     local want = target or 0
     local cur = M.grade or 0
@@ -482,6 +492,15 @@ function M.count()
   local n = 0
   for _, g in pairs(M.games) do if g.name then n = n + 1 end end
   return n
+end
+
+-- set the camera page up from OmniPlay: box = {x,y,w,h} fractions, activity, mult, flip = true
+function M.camera_cmd(t)
+  local c = M.camera_client
+  if not c or c.dead then return false end
+  t.type = "camera_cmd"
+  csend(c, ws_frame(1, json.encode(t)))
+  return true
 end
 
 function M.shutdown()

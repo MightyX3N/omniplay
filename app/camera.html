@@ -30,7 +30,7 @@
 </style>
 </head>
 <body>
-<header><b>OmniPlay camera</b><span>Point the camera at your feet or pedals, then drag a box around them.</span></header>
+<header><b>OmniPlay camera</b><span>Point the camera at your feet or pedals. You can set it up here or in OmniPlay on the PC.</span></header>
 <main>
   <div>
     <div class="stage"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div>
@@ -51,6 +51,7 @@
         <span><button data-m="0.5">½</button> <button data-m="1">1</button> <button data-m="2">2</button></span></div>
       <p class="help">If the number is half or double what you're really doing, change this.</p>
       <div class="row"><span class="label">Camera</span><select id="cams"></select></div>
+      <div class="row"><span class="label">Front / back</span><button id="flip">Switch camera</button></div>
     </div>
     <div class="panel"><div class="row"><span><span class="dot" id="linkdot"></span><span id="link">Connecting to OmniPlay...</span></span></div></div>
   </div>
@@ -84,11 +85,20 @@ overlay.onpointermove = (e) => {
 overlay.onpointerup = () => { drag = null; if (box.w < 0.05 || box.h < 0.05) box = { x: 0.25, y: 0.55, w: 0.5, h: 0.4 }; store("box", box); prev = null; };
 
 // ---------- camera ----------
-let stream = null;
+let stream = null, facing = PHONE ? "environment" : "user";
+async function flipCamera() {
+  facing = facing === "environment" ? "user" : "environment";
+  store("cam", null);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, frameRate: 30 }, audio: false });
+  video.srcObject = stream;
+  prev = null;
+  startLoop(stream.getVideoTracks()[0]);
+}
 async function startCamera(deviceId) {
   if (stream) stream.getTracks().forEach((t) => t.stop());
   const want = deviceId ? { deviceId: { exact: deviceId }, frameRate: 30 }
-    : (PHONE ? { facingMode: "environment", frameRate: 30 } : { frameRate: 30 });
+    : (PHONE ? { facingMode: facing, frameRate: 30 } : { frameRate: 30 });
   try { stream = await navigator.mediaDevices.getUserMedia({ video: want, audio: false }); }
   catch (e) { if (!deviceId) throw e; stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
   video.srcObject = stream;
@@ -99,6 +109,7 @@ async function startCamera(deviceId) {
   startLoop(stream.getVideoTracks()[0]);
 }
 $("cams").onchange = (e) => startCamera(e.target.value);
+$("flip").onclick = () => flipCamera();
 
 // ---------- analysis ----------
 let prev = null;
@@ -165,7 +176,9 @@ function analyse(source, sw, sh) {
 }
 
 // Frames: MediaStreamTrackProcessor keeps running when the window is behind the game; fall back to video frames.
+let loopId = 0;
 function startLoop(track) {
+  const id = ++loopId;
   if (window.MediaStreamTrackProcessor) {
     const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
     const off = new OffscreenCanvas(320, 240), offc = off.getContext("2d");
@@ -173,6 +186,7 @@ function startLoop(track) {
       for (;;) {
         const { value: frame, done } = await reader.read();
         if (done) return;
+        if (id !== loopId) { frame.close(); reader.cancel(); return; }
         const w = frame.displayWidth, h = frame.displayHeight;
         if (off.width !== w || off.height !== h) { off.width = w; off.height = h; }
         offc.drawImage(frame, 0, 0);
@@ -181,7 +195,7 @@ function startLoop(track) {
       }
     })();
   } else {
-    const step = () => { if (video.videoWidth) analyse(video, video.videoWidth, video.videoHeight);
+    const step = () => { if (id !== loopId) return; if (video.videoWidth) analyse(video, video.videoWidth, video.videoHeight);
       video.requestVideoFrameCallback ? video.requestVideoFrameCallback(step) : setTimeout(step, 33); };
     step();
   }
@@ -213,13 +227,35 @@ function connect() {
   ws.onopen = () => { $("link").textContent = "Connected to OmniPlay"; $("linkdot").className = "dot ok"; };
   ws.onclose = () => { $("link").textContent = "Not connected. Is OmniPlay running?"; $("linkdot").className = "dot bad"; setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
-    try { const st = JSON.parse(e.data); if (st.type === "state") $("devcad").textContent = st.device && st.device.name !== "Camera" ? (st.device_cadence ?? "-") + (st.device.kind === "bike" ? " rpm" : "") : "-"; } catch (err) {}
+    try {
+      const st = JSON.parse(e.data);
+      if (st.type === "state") $("devcad").textContent = st.device && st.device.name !== "Camera" ? (st.device_cadence ?? "-") + (st.device.kind === "bike" ? " rpm" : "") : "-";
+      if (st.type === "camera_cmd") {   // set up from OmniPlay on the PC
+        if (st.box) { box = st.box; store("box", box); prev = null; }
+        if (st.activity) { activity = st.activity; store("activity", activity); $("activity").value = activity; }
+        if (st.mult) { mult = st.mult; store("mult", mult); markMult(); }
+        if (st.flip) flipCamera();
+      }
+    } catch (err) {}
   };
 }
 connect();
 if (navigator.wakeLock) { const lock = () => navigator.wakeLock.request("screen").catch(() => {}); lock(); document.addEventListener("visibilitychange", () => { if (!document.hidden) lock(); }); }
+// a small picture of what the camera sees, so OmniPlay on the PC can show it (5 per second)
+const shot = document.createElement("canvas"), sctx = shot.getContext("2d");
+let previewT = 0;
 setInterval(() => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ k: KEY, camera: { moving: result.moving, cadence: result.cadence, freq: result.freq, fps: Math.round(fps), activity } }));
+  if (!ws || ws.readyState !== 1) return;
+  const cam = { moving: result.moving, cadence: result.cadence, freq: result.freq, fps: Math.round(fps), activity, mult, box, energy: result.energy, facing };
+  const t = performance.now();
+  if (t - previewT > 200 && video.videoWidth) {
+    previewT = t;
+    const w = 224, h = Math.round(w * video.videoHeight / video.videoWidth);
+    if (shot.width !== w || shot.height !== h) { shot.width = w; shot.height = h; }
+    sctx.drawImage(video, 0, 0, w, h);
+    cam.preview = shot.toDataURL("image/jpeg", 0.55).split(",")[1];
+  }
+  ws.send(JSON.stringify({ k: KEY, camera: cam }));
 }, 100);
 
 startCamera(store("cam")).catch((err) => { $("link").textContent = "Camera blocked or missing: " + err.message; $("linkdot").className = "dot bad"; });

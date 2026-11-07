@@ -23,12 +23,17 @@ love = {
     getInfo = function(n) return mem[n] and {} or nil end,
     remove = function(n) mem[n] = nil end,
     createDirectory = noop,
+    getDirectoryItems = function(dir)
+      local out = {}
+      for k in pairs(mem) do local f = k:match("^" .. dir:gsub("%-", "%%-") .. "/([^/]+)$"); if f then out[#out + 1] = f end end
+      return out
+    end,
     getSource = function() return "/tmp/omni-main" end,
     getSourceBaseDirectory = function() return "/tmp/omni-main" end,
     getSaveDirectory = function() return "/tmp/omni-main/save" end,
   },
   graphics = graphics,
-  mouse = { getPosition = function() return 0, 0 end, setCursor = noop, getSystemCursor = noop },
+  mouse = { isDown = function() return false end, getPosition = function() return 0, 0 end, setCursor = noop, getSystemCursor = noop },
   timer = { getTime = function() return clock end },
   window = { setTitle = noop },
   system = { setClipboardText = noop, openURL = noop },
@@ -79,7 +84,7 @@ love.load()
 assert(require("output").profiles[1].name == "Old profile", "old saved profiles should be migrated")
 assert(not io.open("/tmp/omni-main/save/profiles.lua"), "old file should be gone")
 
-local tabs = { "Session", "Devices", "Profiles", "History" }
+local tabs = { "Ride", "Routes", "Devices", "Games", "History", "Settings" }
 local frame = 0
 local function step(dt)
   clock = clock + dt
@@ -94,7 +99,7 @@ local function step(dt)
       c.q[#c.q + 1] = { 2, r % 256, math.floor(r / 256), t % 256, math.floor(t / 256) }
     end
   end
-  T.set_tab(tabs[frame % 4 + 1])
+  T.set_tab(tabs[frame % 6 + 1])
   love.update(dt)
   love.draw()
 end
@@ -167,6 +172,38 @@ assert(h.sport == "cycling" and h.elapsed > 100, "bad summary")
 local f = io.open("/tmp/omni-main/activities/OmniPlay-" .. h.id .. "-cycling.fit", "rb")
 assert(f, "FIT file should exist"); f:close()
 run(1) -- draw history with the saved session
+
+-- routes: drop a GPX on the window, ride it; with the game gone, the route's hill reaches the bike
+ws:close()
+run(5)
+assert(not api.game_name(), "game should have left")
+local g = { '<gpx><trk><name>Hill test</name><trkseg>' }
+for i = 0, 200 do -- 2 km flat, then a steady 6 % climb
+  local dm = i * 20
+  g[#g + 1] = string.format('<trkpt lat="45.0" lon="%.6f"><ele>%.1f</ele></trkpt>', dm / 78710, dm > 2000 and (dm - 2000) * 0.06 or 0)
+end
+g[#g + 1] = '</trkseg></trk></gpx>'
+local gpx = table.concat(g)
+love.filedropped({ getFilename = function() return "C:\\Users\\x\\hill test.gpx" end, open = noop, close = noop, read = function() return gpx end })
+local rt = T.rt()
+assert(rt.sel == "hill test.gpx" and mem["data/routes/hill test.gpx"], "dropped GPX should be imported")
+local r = require("route").load(rt.sel)
+assert(math.abs(r.length - 4000) < 30 and math.abs(r.climb - 120) < 8, "route stats: " .. r.length .. " m, climb " .. r.climb)
+rt.ride = { r = r, pos = 2600, climbed = 0 }
+run(4)
+local last
+for _, w in ipairs(fake.writes) do if w[1] == 0x11 then last = w end end
+local sent = (last[4] + last[5] * 256) / 100
+assert(math.abs(sent - 6) < 0.3, "route hill should reach the bike, sent " .. sent)
+assert(rt.ride.pos > 2600, "position should move with speed")
+rt.strength = 0.5
+run(4)
+for _, w in ipairs(fake.writes) do if w[1] == 0x11 then last = w end end
+sent = (last[4] + last[5] * 256) / 100
+assert(math.abs(sent - 3) < 0.3, "half hills should send half, sent " .. sent)
+print(string.format("route: %.1f km, climb %d m, hill sent %.1f %% at half strength", r.length / 1000, r.climb, sent))
+rt.ride = nil
+run(3)
 -- camera only: no Bluetooth device, the camera page drives speed (cycling 90 rpm ~ 29 km/h)
 devices.disconnect()
 run(0.1)
