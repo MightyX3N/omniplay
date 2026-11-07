@@ -313,6 +313,15 @@ fake.sp_on, fake.sp_speed = true, 0.3
 fake.sp_fail = 3
 run(30)
 assert(math.abs(fake.sp_speed - 4) < 0.2, string.format("after a restart the pad should get back to 4 km/h, at %.2f", fake.sp_speed))
+-- you take it above your max speed with the remote: the app leaves the belt there
+fake.sp_cmd, fake.sp_speed = 6.5, 6.5
+run(8)
+assert(math.abs(fake.sp_speed - 6.5) < 0.05, string.format("above max by the remote: leave it, at %.2f", fake.sp_speed))
+assert(rt.walk <= 6, "pace never above the max")
+-- back under the max with the remote: the route takes over again from there
+fake.sp_cmd, fake.sp_speed = 4.5, 4.5
+run(12)
+assert(math.abs(rt.walk - 4.5) < 0.2, "new pace after coming back under the max, got " .. rt.walk)
 rt.ride = nil
 love.keypressed("f8")
 local output = require("output")

@@ -219,7 +219,9 @@ function love.update(dt)
         -- actually reached our last command and then left it, so a slow start or a lagging pad isn't mistaken for you.
         local cmd = pad.belt_cmd
         local v_now = pad.m.speed_kmh or 0
-        if moving and cmd and pad.cmd_reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
+        -- the app never sets more than your max speed; if you went above it with the remote, it leaves the belt alone
+        local over_max = moving and v_now > hi + 0.15
+        if moving and not over_max and cmd and pad.cmd_reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
           rr.manual_t = (rr.manual_t or 0) + dt
           if rr.manual_t > 2.5 then
             rt.walk = math.max(lo, math.min(hi, pad.m.speed_kmh / route.walk_factor(here.g, rt.strength)))
@@ -231,7 +233,17 @@ function love.update(dt)
             add_log("info", string.format("new walking pace from the remote: %.1f km/h on the flat", rt.walk))
           end
         else rr.manual_t = 0 end
-        if moving then devices.set_belt_speed(want, 0.2) end
+        if over_max then
+          pad.belt_target, pad.belt_cmd, pad.cmd_reached = nil, v_now, true
+          rr.was_over = true
+        elseif moving and rr.was_over then
+          -- back under your max with the remote: that speed is the new pace
+          rr.was_over = nil
+          rt.walk = math.floor(math.max(lo, math.min(hi, v_now / route.walk_factor(here.g, rt.strength))) * 10 + 0.5) / 10
+          save_rt()
+          pad.belt_cmd, pad.belt_target, pad.cmd_reached = v_now, v_now, true
+          devices.trace_line(pad, string.format("back under max: new flat pace %.1f", rt.walk))
+        elseif moving then devices.set_belt_speed(want, 0.2) end
         -- heads-up for what the belt will do in ~10 s
         local v = math.max(1, pad.m.speed_kmh or rt.walk)
         local later = speed_at(route.at(rr.r, rr.pos + v / 3.6 * 10).g)
@@ -240,6 +252,7 @@ function love.update(dt)
           notice = string.format("%s ahead, %s to %.1f", later < want and "Climb" or "Downhill",
             later < want and "slowing" or "speeding up", later)
         end
+        if over_max then notice = string.format("above your max speed (%.1f), not changing the belt", hi) end
         rr.pad = { speed = pad.belt_target or want, name = pad.dev.name, notice = notice, moving = moving }
       else
         rr.pad = { off = true, name = pad.dev.name }
@@ -406,8 +419,22 @@ local function draw_ride_route(x, y, w, h)
   local gs = string.format("%+.1f %%", g)
   ui.text(gs, x + cw - 30 - nwid - ui.width(gs, "big"), y + 16, route.color(g, C), "big")
   -- profile with the marker
-  local py, ph = y + 76, ch - 76 - 108
+  local py, ph = y + 76, ch - 76 - 124
   routeview.profile(r, x + 22, py, cw - 44, ph, rr.pos)
+  -- drag along the profile to move on the route (to skip ahead, or go back)
+  local mx, my = ui.mouse()
+  local over = mx >= x + 22 and mx <= x + cw - 22 and my >= py - 10 and my <= py + ph
+  if love.mouse.isDown(1) and (rr.dragging or over) then
+    rr.dragging = true
+    rr.pos = math.max(0, math.min(r.length, (mx - x - 22) / (cw - 44) * r.length))
+    rr.last_e = route.at(r, rr.pos).e -- jumping doesn't count as climbing
+    rr.done = rr.pos >= r.length
+  else
+    rr.dragging = nil
+  end
+  if over then love.mouse.setCursor(love.mouse.getSystemCursor("sizewe")) end
+  ui.text(rr.dragging and string.format("km %.2f", rr.pos / 1000) or "drag to move along the route",
+    x + 22, py + ph + 2, rr.dragging and C.yellow or C.dim, "xs")
   -- what's next
   local bw = (cw - 44 - 28) / 3
   local by = y + ch - 96
