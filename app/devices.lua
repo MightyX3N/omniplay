@@ -245,11 +245,13 @@ local function update_conn(c, dt)
       local nxt = c.belt_target > cur and math.min(c.belt_target, cur + step) or math.max(c.belt_target, cur - step)
       c.belt_t = 0
       if not c.belt_cmd or math.abs(nxt - c.belt_cmd) >= 0.1 then
-        c.belt_cmd = nxt
+        -- only count a command as sent when it really went out (a Sperax ignores it unless running)
         if kind == "sperax" and c.m.state == "running" then
           write(c, sperax.encode({ 0x15, 0x01, math.floor(nxt * 10 + 0.5), 0x00 }))
+          c.belt_cmd, c.belt_cmd_t = nxt, now()
         elseif kind == "ftms_treadmill" then
           write(c, ftms.target_speed(nxt))
+          c.belt_cmd, c.belt_cmd_t = nxt, now()
         end
       end
     end

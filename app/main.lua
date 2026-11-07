@@ -212,10 +212,16 @@ function love.update(dt)
         local lo, hi = devices.min_belt(pad.dev.kind), pad.dev.max_speed or 4
         local function speed_at(g) return math.max(lo, math.min(hi, rt.walk * route.walk_factor(g, rt.strength))) end
         local want = speed_at(here.g)
-        local moving = (pad.m.speed_kmh or 0) > 0.3 and (pad.m.state == nil or pad.m.state == "running")
-        -- you changed the speed on the remote: that is your new normal pace
+        -- a Sperax says when its belt runs (it starts slow, 0.3 km/h and up); FTMS treadmills only give the speed
+        local moving
+        if pad.m.state ~= nil then moving = pad.m.state == "running" else moving = (pad.m.speed_kmh or 0) > 0.2 end
+        -- you changed the speed on the remote: that is your new normal pace. Only once the belt had
+        -- actually reached our last command and then left it, so a slow start or a lagging pad isn't mistaken for you.
         local cmd = pad.belt_cmd
-        if moving and cmd and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs((pad.m.speed_kmh or 0) - cmd) > 0.25 then
+        local v_now = pad.m.speed_kmh or 0
+        if cmd ~= rr.seen_cmd then rr.seen_cmd, rr.reached = cmd, false end
+        if cmd and math.abs(v_now - cmd) < 0.15 then rr.reached = true end
+        if moving and rr.reached and pad.belt_target and math.abs(cmd - pad.belt_target) < 0.15 and math.abs(v_now - cmd) > 0.25 then
           rr.manual_t = (rr.manual_t or 0) + dt
           if rr.manual_t > 2.5 then
             rt.walk = math.max(lo, math.min(hi, pad.m.speed_kmh / route.walk_factor(here.g, rt.strength)))
@@ -223,6 +229,7 @@ function love.update(dt)
             save_rt(); rr.manual_t = 0
             want = speed_at(here.g)
             pad.belt_cmd, pad.belt_target = pad.m.speed_kmh, pad.m.speed_kmh
+            rr.seen_cmd, rr.reached = pad.belt_cmd, true
             add_log("info", string.format("new walking pace from the remote: %.1f km/h on the flat", rt.walk))
           end
         else rr.manual_t = 0 end

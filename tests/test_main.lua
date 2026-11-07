@@ -49,6 +49,7 @@ local EXPLORE = {
   AABBCCDDEEFF = { "service " .. U("1826"), "char " .. U("2acc") .. " props 2", "char " .. U("2ad2") .. " props 10",
     "char " .. U("2ad9") .. " props 28", "listening 500" },
   ["778899AABBCC"] = { "service " .. U("1816"), "char " .. U("2a5b") .. " props 16", "listening 500" },
+  ["5A5A5A5A5A5A"] = { "service " .. U("fff0"), "char " .. U("fff1") .. " props 16", "char " .. U("fff2") .. " props 12", "listening 500" },
   ["CCDDEEFF0011"] = { "service " .. U("1826"), "char " .. U("2acd") .. " props 16", "char " .. U("2ad9") .. " props 28", "listening 500" },
 }
 local lib = {
@@ -58,7 +59,8 @@ local lib = {
   sb_scan_stop = noop,
   sb_scan_list = function(buf, max) return put(buf, max,
     "HT2405118\tAABBCCDDEEFF\t-60\t100\t1\nROCKBROS C\t778899AABBCC\t-55\t100\t4\nTV\t112233445566\t-80\t100\t0\n" ..
-    (fake.treadmill and "Treadmill\tCCDDEEFF0011\t-50\t100\t1\n" or "")) end,
+    (fake.treadmill and "Treadmill\tCCDDEEFF0011\t-50\t100\t1\n" or "") ..
+    (fake.sperax and "SPERAX_RM01\t5A5A5A5A5A5A\t-50\t100\t1\n" or "")) end,
   sb_open_h = function(addr) local h = #fake.conns fake.conns[h + 1] = { addr = ffi.string(addr), state = 1, open_t = clock, q = {} } return h end,
   sb_state_h = function(h) local c = fake.conns[h + 1] return c and c.state or 0 end,
   sb_error_h = function() return "fake error" end,
@@ -70,6 +72,8 @@ local lib = {
     fake.writes[#fake.writes + 1] = t
     -- the fake treadmill follows speed commands like a real one
     if t.addr == "CCDDEEFF0011" and t[1] == 0x02 then fake.belt = (t[2] + t[3] * 256) / 100 end
+    -- Sperax speed command F5 .. 15 01 <kmh*10> ..: the pad's belt moves toward it at its own pace
+    if t.addr == "5A5A5A5A5A5A" and t[4] == 0x15 and t[5] == 0x01 then fake.sp_cmd = t[6] / 10 end
     if t.addr == "CCDDEEFF0011" and t[1] == 0x03 then fake.incline_set = (t[2] + t[3] * 256) / 10 end
     return 0
   end,
@@ -107,6 +111,15 @@ local function step(dt)
       if fake.crank then fake.revs = (fake.revs or 0) + 1.5 fake.ctime = (fake.ctime or 0) + 1024 end
       local r, t = math.floor(fake.revs or 0) % 65536, math.floor((fake.ctime or 0) * (math.floor(fake.revs or 0) / math.max(1, fake.revs or 1))) % 65536
       c.q[#c.q + 1] = { 2, r % 256, math.floor(r / 256), t % 256, math.floor(t / 256) }
+    end
+    if c.state == 2 and c.addr == "5A5A5A5A5A5A" and frame % 5 == 0 then
+      local sp = require("drivers.sperax")
+      if fake.sp_cmd and fake.sp_on then
+        local v = fake.sp_speed
+        fake.sp_speed = v < fake.sp_cmd and math.min(fake.sp_cmd, v + 0.12) or math.max(fake.sp_cmd, v - 0.12)
+      end
+      local v10 = math.floor(fake.sp_speed * 10 + 0.5)
+      c.q[#c.q + 1] = sp.encode({ 0x19, 0, 0, fake.sp_on and 0x10 or 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, v10, 0, 0, 0 })
     end
     if c.state == 2 and c.addr == "CCDDEEFF0011" and frame % 5 == 0 then
       local v = math.floor((fake.belt or 0) * 100 + 0.5)
@@ -264,6 +277,29 @@ local before = fake.belt
 run(3)
 assert(fake.incline_set and math.abs(fake.incline_set - 6) < 0.3, "tilting treadmill should get the incline, got " .. tostring(fake.incline_set))
 assert(math.abs(fake.belt - before) < 0.05, "and its speed is left alone")
+rt.ride = nil
+-- Sperax: started with its remote, the belt crawls at 0.3 km/h. The route must take it up to
+-- the walking pace by itself, and that slow start must not count as "you changed the speed".
+devices.disconnect(tdev)
+fake.sperax, fake.sp_on, fake.sp_speed, fake.sp_cmd = true, false, 0, nil
+run(1.5)
+local spx
+for _, n in ipairs(T.nearby()) do if n.name == "SPERAX_RM01" then spx = n end end
+assert(spx, "sperax should be listed")
+T.add_device(spx)
+run(3)
+local sdev = T.saved().devices[#T.saved().devices]
+assert(sdev.kind == "sperax" and devices.state_of(sdev) == "connected", "sperax connected")
+sdev.allow_speed, sdev.max_speed = true, 6
+rt.walk = 4
+rt.ride = { r = r, pos = 100, climbed = 0 } -- flat part
+run(3)
+assert(not fake.sp_cmd, "stopped pad: no speed commands")
+fake.sp_on, fake.sp_speed = true, 0.3
+run(40)
+assert(math.abs(fake.sp_speed - 4) < 0.15, string.format("pad should reach 4 km/h by itself, at %.2f", fake.sp_speed))
+assert(math.abs(rt.walk - 4) < 0.05, "slow start must not change the pace, got " .. rt.walk)
+print(string.format("sperax: started at 0.3, route took it to %.1f km/h", fake.sp_speed))
 rt.ride = nil
 love.keypressed("f8")
 local output = require("output")
