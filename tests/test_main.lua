@@ -116,6 +116,12 @@ local function step(dt)
       if fake.crank then fake.revs = (fake.revs or 0) + 1.5 fake.ctime = (fake.ctime or 0) + 1024 end
       local r, t = math.floor(fake.revs or 0) % 65536, math.floor((fake.ctime or 0) * (math.floor(fake.revs or 0) / math.max(1, fake.revs or 1))) % 65536
       c.q[#c.q + 1] = { 2, r % 256, math.floor(r / 256), t % 256, math.floor(t / 256) }
+      if fake.wheel_mode then
+        -- speed mode: 3 wheel revolutions a second
+        fake.wrevs, fake.wtime = (fake.wrevs or 0) + 3, ((fake.wtime or 0) + 1024) % 65536
+        local w = fake.wrevs
+        c.q[#c.q] = { 1, w % 256, math.floor(w / 256) % 256, math.floor(w / 65536) % 256, 0, fake.wtime % 256, math.floor(fake.wtime / 256) }
+      end
     end
     if c.state == 2 and c.addr == "5A5A5A5A5A5A" and frame % 5 == 0 then
       local sp = require("drivers.sperax")
@@ -168,6 +174,20 @@ assert(not devices.m.moving and devices.m.cadence == 0, "crank stopped -> still 
 fake.crank = true
 run(2)
 assert(devices.m.moving, "pedalling again")
+
+-- the sensor switched to speed mode: speed from the sensor (wheel 2105 mm), cadence back from the bike
+fake.wheel_mode = true
+run(7)
+assert(devices.m.sources.speed == "sensor" and math.abs(devices.m.speed_kmh - 22.7) < 0.5, "speed from the sensor in speed mode, got " .. tostring(devices.m.speed_kmh))
+assert(devices.m.sources.cadence ~= "sensor", "no cadence from a sensor in speed mode")
+saved.devices[2].wheel_mm = 2290
+run(3)
+assert(math.abs(devices.m.speed_kmh - 24.7) < 0.5, "wheel size changes speed, got " .. devices.m.speed_kmh)
+print(string.format("sensor in speed mode: %.1f km/h from the sensor, %d rpm from the bike", devices.m.speed_kmh, devices.m.cadence or -1))
+fake.wheel_mode = false
+saved.devices[2].wheel_mm = nil
+run(7)
+assert(devices.m.sources.cadence == "sensor" and devices.m.sources.speed ~= "sensor", "back to cadence mode")
 
 -- a game connects over the mod API and asks for a hill; it must reach the bike as FTMS simulation (0x11)
 local socket = require("socket")

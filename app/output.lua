@@ -109,7 +109,10 @@ local function gait_for(p, m, kind)
     if not st then return false end
     if walking_device then return st.pad_kmh and (m.speed_kmh or 0) >= st.pad_kmh end
     if st.watts and m.power and m.power >= st.watts then return true end
-    return st.rpm and (m.cadence or 0) >= st.rpm or false
+    -- a speed sensor without cadence: about 3 km/h per rpm (70 rpm ~ 23 km/h on a road bike)
+    local cad = m.cadence
+    if not cad and m.speed_kmh then cad = m.speed_kmh * 3 end
+    return st.rpm and (cad or 0) >= st.rpm or false
   end
   if reached(p.sprint) then return "sprint" end
   if reached(p.run) then return "run" end

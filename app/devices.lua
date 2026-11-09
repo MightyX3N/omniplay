@@ -27,7 +27,7 @@ local KINDS = {
   ftms_bike = { svc = "1826", notify = "2ad2,2ad9,2ada", write = "2ad9", label = "FTMS bike", move = true },
   ftms_treadmill = { svc = "1826", notify = "2acd,2ad9,2ada", write = "2ad9", label = "FTMS treadmill", move = true },
   rsc = { svc = "1814", notify = "2a53", write = "", label = "Footpod", move = true },
-  csc = { svc = "1816", notify = "2a5b", write = "", label = "Cadence sensor" },
+  csc = { svc = "1816", notify = "2a5b", write = "", label = "Speed / cadence sensor" },
   hr = { svc = "180d", notify = "2a37", write = "", label = "Heart rate" },
 }
 M.KINDS = KINDS
@@ -231,7 +231,7 @@ local function update_conn(c, dt)
   end
 
   local kind = c.dev.kind
-  if kind == "csc" then csc.update(c.csc, c.m, now()) end
+  if kind == "csc" then csc.update(c.csc, c.m, now(), (c.dev.wheel_mm or 2105) / 1000) end
   if kind == "sperax" then
     c.poll_t = c.poll_t + dt
     if c.poll_t >= POLL_S then
@@ -356,8 +356,10 @@ local function combine()
   m.sources = {}
   local sensor = first_of("csc")
   if sensor and sensor.m.fresh then
-    m.cadence, m.moving = sensor.m.cadence, sensor.m.moving
-    m.sources.cadence, m.sources.moving = "sensor", "sensor"
+    -- cadence mode gives cadence, speed mode gives speed; either one says when you stop
+    if sensor.m.has_crank then m.cadence, m.sources.cadence = sensor.m.cadence, "sensor" end
+    if sensor.m.has_wheel then m.speed_kmh, m.sources.speed = sensor.m.speed_kmh, "sensor" end
+    if sensor.m.has_crank or sensor.m.has_wheel then m.moving, m.sources.moving = sensor.m.moving, "sensor" end
     if not mv then m.kind = "csc" end
   end
   local strap = first_of("hr")

@@ -172,9 +172,10 @@ function love.update(dt)
     dev_cad = real and m.cadence or nil
     local mm = {}
     if real then for k, v in pairs(m) do mm[k] = v end end
-    -- a cadence sensor beats the camera; the camera beats the bike's console
-    if not (mm.sources and mm.sources.cadence == "sensor") then
-      mm.moving = cam.moving
+    -- a speed / cadence sensor beats the camera; the camera beats the bike's console
+    local src_ = mm.sources or {}
+    if src_.moving ~= "sensor" then mm.moving = cam.moving end
+    if src_.cadence ~= "sensor" then
       if cam.moving and cam.cadence > 0 then mm.cadence = cam.cadence elseif not cam.moving then mm.cadence = 0 end
     end
     if not real then
@@ -332,7 +333,7 @@ local PAD = 24
 local KIND_ICON = { ftms_bike = { "B", C.green }, sperax = { "W", C.green }, ftms_treadmill = { "T", C.green },
   rsc = { "F", C.green }, csc = { "C", C.blue }, hr = { "H", C.pink } }
 local KIND_NAME = { ftms_bike = "Bike", sperax = "Walking pad", ftms_treadmill = "Treadmill", rsc = "Footpod",
-  csc = "Cadence sensor", hr = "Heart-rate strap" }
+  csc = "Speed / cadence sensor", hr = "Heart-rate strap" }
 
 local function first_connected(kind)
   for _, d in ipairs(saved.devices) do
@@ -349,7 +350,7 @@ local function sources()
   local mv_name = mv and mv.name or (cam and not mv and (cam.phone and "phone camera" or "webcam")) or nil
   local sensor, strap = first_connected("csc"), first_connected("hr")
   local cam_name = cam and (cam.phone and "phone camera" or "webcam")
-  local r = { speed = mv_name, power = mv and m.power and mv.name or nil }
+  local r = { speed = (s.speed == "sensor" and sensor) and sensor.name or mv_name, power = mv and m.power and mv.name or nil }
   if s.cadence == "sensor" and sensor then r.cadence = sensor.name
   elseif cam_name then r.cadence = cam_name else r.cadence = mv_name end
   if s.moving == "sensor" and sensor then r.moving = sensor.name elseif cam_name then r.moving = cam_name else r.moving = mv_name end
@@ -761,6 +762,10 @@ local function device_card(d, x, y, w)
   -- measure: header 70 + values 90 + facts 34 + settings
   local settings = (d.kind == "ftms_bike") and 1 or ((d.kind == "sperax" or d.kind == "ftms_treadmill") and 2 or 0)
   h = 70 + (st == "connected" and 90 or 0) + 54 + settings * 50 + (d.kind == "sperax" and 50 or 0)
+  if d.kind == "csc" then
+    local wheel_shown = not (st == "connected" and (dm.has_wheel or dm.has_crank)) or dm.has_wheel
+    h = h + 34 + (wheel_shown and 80 or 0)
+  end
   ui.rect(x, y, w, h, C.card, 22)
   ui.rect(x + 18, y + 16, 44, 44, ic[2], 14)
   ui.text(ic[1], x + 18, y + 16 + (44 - ui.height("b")) / 2, C.tile_text, "b", 44, "center")
@@ -780,9 +785,16 @@ local function device_card(d, x, y, w)
       return "backup", C.yellow
     end
     if d.kind == "csc" then
-      local n1, c1 = use("cadence")
       local n2, c2 = use("moving")
-      boxes = { { "Cadence", string.format("%d", dm.cadence or 0), "rpm", n1, c1 }, { "Moving", dm.moving and "yes" or "no", "", n2, c2 } }
+      if dm.has_wheel then
+        local n0, c0 = use("speed")
+        boxes[#boxes + 1] = { "Speed", string.format("%.1f", dm.speed_kmh or 0), "km/h", n0, c0 }
+      end
+      if dm.has_crank or not dm.has_wheel then
+        local n1, c1 = use("cadence")
+        boxes[#boxes + 1] = { "Cadence", string.format("%d", dm.cadence or 0), "rpm", n1, c1 }
+      end
+      boxes[#boxes + 1] = { "Moving", dm.moving and "yes" or "no", "", n2, c2 }
     elseif d.kind == "hr" then
       local n1, c1 = use("hr")
       boxes = { { "Heart rate", tostring(dm.hr or 0), "bpm", n1, c1 } }
@@ -801,7 +813,18 @@ local function device_card(d, x, y, w)
     yy = yy + 90
   end
   -- settings
-  if d.kind == "ftms_bike" then
+  if d.kind == "csc" then
+    local mode = st == "connected" and (dm.has_wheel and dm.has_crank and "speed and cadence" or dm.has_wheel and "speed" or dm.has_crank and "cadence") or nil
+    ui.text(mode and ("Sensor is in " .. mode .. " mode. Switch the mode on the sensor itself (see its manual); OmniPlay follows by itself.")
+      or "Works in cadence mode (on the crank) and speed mode (on the wheel hub).", x + 18, yy, C.muted, "xs", w - 36)
+    yy = yy + 34
+    if not mode or dm.has_wheel then
+      d.wheel_mm = ui.stepper("Wheel", d.wheel_mm or 2105, 5, 1000, 2600, "%d mm", x + 18, yy, w - 36)
+      yy = yy + 46
+      ui.text("Around the tyre: 700x25c 2105 · 700x28c 2136 · 29x2.2 2288 · 27.5x2.2 2148 · 26x2.0 2055", x + 18, yy, C.dim, "xs", w - 36)
+      yy = yy + 34
+    end
+  elseif d.kind == "ftms_bike" then
     d.allow_hills = ui.toggle("Games may set hills", "Resistance follows the gradient in games and routes", d.allow_hills ~= false, x + 18, yy, w - 36)
     yy = yy + 50
   elseif d.kind == "sperax" or d.kind == "ftms_treadmill" then
