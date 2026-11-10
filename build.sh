@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds the Windows release into dist/OmniPlay/ and dist/OmniPlay.zip.
-# Needs: gcc-mingw-w64-x86-64, gcc-mingw-w64-i686 (32-bit GMod module), zip, curl. Runs on Linux (also used by GitHub Actions).
+# Needs: gcc-mingw-w64-x86-64, zip, curl. Runs on Linux (also used by GitHub Actions).
 set -e
 cd "$(dirname "$0")"
 LOVE_VER=11.5
@@ -24,13 +24,6 @@ x86_64-w64-mingw32-gcc -shared -O2 -Wall -o build/omniplay_ble.dll native/omnipl
   -I"$MBEDTLS/include" "$MBEDTLS/libmbed-win.a" \
   -lruntimeobject -lole32 -lws2_32 -lbcrypt -static-libgcc -static
 
-# 1b. Game SDK: client DLL for any language, and the Garry's Mod module (32- and 64-bit GMod)
-SDKF="-shared -O2 -Wall -static-libgcc -Wl,--kill-at"
-x86_64-w64-mingw32-gcc $SDKF -DOMNIPLAY_BUILD_DLL -o build/omniplay_client_x64.dll sdk/omniplay.c
-i686-w64-mingw32-gcc   $SDKF -DOMNIPLAY_BUILD_DLL -o build/omniplay_client_x86.dll sdk/omniplay.c
-x86_64-w64-mingw32-gcc $SDKF -o build/gmcl_omniplay_win64.dll sdk/gmod/gmcl_omniplay.c sdk/omniplay.c
-i686-w64-mingw32-gcc   $SDKF -o build/gmcl_omniplay_win32.dll sdk/gmod/gmcl_omniplay.c sdk/omniplay.c
-
 # 2. LÖVE runtime (downloaded once)
 if [ ! -d "$LOVE_DIR" ]; then
   curl -sSfL -o build/love.zip "https://github.com/love2d/love/releases/download/$LOVE_VER/love-$LOVE_VER-win64.zip"
@@ -48,18 +41,9 @@ cp "$LOVE_DIR/license.txt" dist/OmniPlay/LOVE-license.txt
 cp build/omniplay_ble.dll LICENSE dist/OmniPlay/
 cp "$MBEDTLS/LICENSE" dist/OmniPlay/mbedTLS-LICENSE.txt
 mkdir -p dist/OmniPlay/gmod-addon && cp -r gmod/omniplay_bridge dist/OmniPlay/gmod-addon/ && cp docs/API.md dist/OmniPlay/
-# the GMod module ships with the app, which installs it into garrysmod/lua/bin
-mkdir -p dist/OmniPlay/gmod-module && cp build/gmcl_omniplay_win32.dll build/gmcl_omniplay_win64.dll dist/OmniPlay/gmod-module/
-# the SDK for game developers, as its own zip
-rm -rf dist/sdk && mkdir -p dist/sdk/OmniPlay-SDK/bin/x64 dist/sdk/OmniPlay-SDK/bin/x86 dist/sdk/OmniPlay-SDK/gmod dist/sdk/OmniPlay-SDK/love dist/sdk/OmniPlay-SDK/examples
-cp sdk/omniplay.h sdk/omniplay.c sdk/LICENSE docs/SDK.md dist/sdk/OmniPlay-SDK/
-cp build/omniplay_client_x64.dll dist/sdk/OmniPlay-SDK/bin/x64/omniplay_client.dll
-cp build/omniplay_client_x86.dll dist/sdk/OmniPlay-SDK/bin/x86/omniplay_client.dll
-cp build/gmcl_omniplay_win32.dll build/gmcl_omniplay_win64.dll sdk/gmod/gmcl_omniplay.c dist/sdk/OmniPlay-SDK/gmod/
-cp -r gmod/omniplay_bridge dist/sdk/OmniPlay-SDK/gmod/
-cp sdk/love/omniplay.lua dist/sdk/OmniPlay-SDK/love/
-cp -r sdk/examples/. dist/sdk/OmniPlay-SDK/examples/
-mkdir -p dist/sdk/OmniPlay-SDK/tools && cp sdk/tools/omniplay_sim.lua dist/sdk/OmniPlay-SDK/tools/
+# the SDK for game developers, as its own zip (pure Lua + JS core, Android adapter, docs)
+rm -rf dist/sdk && mkdir -p dist/sdk/OmniPlay-SDK
+cp -r sdk/lua sdk/js sdk/android sdk/LICENSE docs/SDK.md dist/sdk/OmniPlay-SDK/
 (cd dist/sdk && zip -q -9 -r ../OmniPlay-SDK.zip OmniPlay-SDK)
 (cd dist && zip -q -9 -r OmniPlay.zip OmniPlay)
 echo "built dist/OmniPlay.zip"

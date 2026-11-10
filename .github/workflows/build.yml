@@ -12,9 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 gcc luajit lua-socket zip
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 luajit lua-socket zip nodejs
       - name: Test
-        run: luajit tests/test_sperax.lua && luajit tests/test_csc.lua && luajit tests/test_ftms.lua && luajit tests/test_output.lua && luajit tests/test_session.lua && luajit tests/test_api.lua && luajit tests/test_main.lua && luajit tests/test_sdk.lua && (cd physplay && luajit tests/test_world.lua && luajit tests/test_server.lua && luajit tests/test_client.lua)
+        run: luajit tests/test_sperax.lua && luajit tests/test_csc.lua && luajit tests/test_ftms.lua && luajit tests/test_output.lua && luajit tests/test_session.lua && luajit tests/test_api.lua && luajit tests/test_main.lua && luajit tests/test_sdk.lua && node tests/sdk/test_sdk.mjs && (cd physplay && luajit tests/test_world.lua && luajit tests/test_server.lua && luajit tests/test_client.lua)
       - name: Build
         run: sh build.sh
       - uses: actions/upload-artifact@v4

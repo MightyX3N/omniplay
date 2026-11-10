@@ -1,0 +1,777 @@
+[
+ {
+  "name": "detect",
+  "steps": [
+   {
+    "detect": [
+     "00001826-0000-1000-8000-00805f9b34fb",
+     "00002ad2-0000-1000-8000-00805f9b34fb",
+     "00002ad9-0000-1000-8000-00805f9b34fb"
+    ],
+    "name": "HT2405118",
+    "kind": "ftms_bike"
+   },
+   {
+    "detect": [
+     "1826",
+     "2acd"
+    ],
+    "name": "Treadmill",
+    "kind": "ftms_treadmill"
+   },
+   {
+    "detect": [
+     "fff0",
+     "fff1",
+     "fff2"
+    ],
+    "name": "SPERAX_RM01",
+    "kind": "sperax"
+   },
+   {
+    "detect": [
+     "1816"
+    ],
+    "name": "ROCKBROS C3",
+    "kind": "csc"
+   },
+   {
+    "detect": [
+     "180D",
+     "2A37"
+    ],
+    "name": "Polar H10",
+    "kind": "hr"
+   },
+   {
+    "detect": [
+     "1814",
+     "2a53"
+    ],
+    "name": "RunPod",
+    "kind": "rsc"
+   },
+   {
+    "detect": [
+     "180f",
+     "1800"
+    ],
+    "name": "TV",
+    "kind": null
+   }
+  ]
+ },
+ {
+  "name": "bike",
+  "opts": {},
+  "steps": [
+   {
+    "add": "bike",
+    "name": "HT2405118",
+    "uuids": [
+     "1826",
+     "2ad2",
+     "2ad9",
+     "2ada"
+    ],
+    "kind": "ftms_bike"
+   },
+   {
+    "notify": "bike",
+    "chars": [
+     "00002ad2-0000-1000-8000-00805f9b34fb",
+     "00002ad9-0000-1000-8000-00805f9b34fb",
+     "00002ada-0000-1000-8000-00805f9b34fb"
+    ]
+   },
+   {
+    "connected": "bike"
+   },
+   {
+    "writes": [
+     "bike 2ad9 00",
+     "bike 2ad9 01",
+     "bike 2ad9 07"
+    ]
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "expect": {
+     "speed_kmh": 0,
+     "cadence": 0,
+     "power": 0,
+     "moving": false,
+     "gait": "stopped",
+     "kind": "ftms_bike"
+    }
+   },
+   {
+    "writes": [
+     "bike 2ad9 11 00 00 00 00 28 33"
+    ]
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "expect": {
+     "speed_kmh": 25.6,
+     "cadence": 85,
+     "power": 140,
+     "hr": 130,
+     "moving": true,
+     "gait": "run"
+    }
+   },
+   {
+    "events": [
+     [
+      "start"
+     ],
+     [
+      "gait",
+      "run"
+     ]
+    ]
+   },
+   {
+    "grade": 5
+   },
+   {
+    "update": 0.3
+   },
+   {
+    "writes": [
+     "bike 2ad9 11 00 00 F4 01 28 33"
+    ]
+   },
+   {
+    "grade": -2
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "writes": []
+   },
+   {
+    "update": 0.2
+   },
+   {
+    "writes": [
+     "bike 2ad9 11 00 00 38 FF 28 33"
+    ]
+   },
+   {
+    "grade": -2.05
+   },
+   {
+    "update": 0.3
+   },
+   {
+    "writes": []
+   },
+   {
+    "expect": {
+     "grade": -2
+    }
+   },
+   {
+    "rx": "bike",
+    "char": "2ada",
+    "hex": "FF"
+   },
+   {
+    "writes": [
+     "bike 2ad9 00"
+    ]
+   },
+   {
+    "remove": "bike"
+   },
+   {
+    "writes": [
+     "bike 2ad9 08 01"
+    ]
+   },
+   {
+    "expect": {
+     "speed_kmh": null,
+     "moving": false,
+     "kind": null
+    }
+   }
+  ]
+ },
+ {
+  "name": "sperax",
+  "opts": {},
+  "steps": [
+   {
+    "add": "pad",
+    "name": "SPERAX_RM01",
+    "uuids": [
+     "fff0",
+     "fff1",
+     "fff2"
+    ],
+    "kind": "sperax"
+   },
+   {
+    "connected": "pad"
+   },
+   {
+    "writes": []
+   },
+   {
+    "update": 0.25
+   },
+   {
+    "writes": [
+     "pad fff2 F5 08 00 19 F0 0A 59 FA"
+    ]
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "F5 18 00 19 00 00 10 00 00 00 "
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "3E 00 01 00 01 00 05 14 00 00 00 AC 4E FA"
+   },
+   {
+    "update": 0.05
+   },
+   {
+    "expect": {
+     "speed_kmh": 2.0,
+     "steps": 5,
+     "moving": true,
+     "kind": "sperax",
+     "gait": "walk"
+    }
+   },
+   {
+    "belt": 3
+   },
+   {
+    "update": 1.2
+   },
+   {
+    "writes_without_status": []
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "F5 19 00 19 00 00 02 00 00 00 43 00 02 00 01 00 0E 00 00 00 00 F0 08 DF FA"
+   },
+   {
+    "update": 0.05
+   },
+   {
+    "expect": {
+     "speed_kmh": 0,
+     "moving": false,
+     "gait": "stopped"
+    }
+   }
+  ]
+ },
+ {
+  "name": "sperax belt",
+  "opts": {
+   "allow_belt": true,
+   "max_belt_kmh": 6
+  },
+  "steps": [
+   {
+    "add": "pad",
+    "name": "SPERAX_RM01",
+    "uuids": [
+     "fff0"
+    ],
+    "kind": "sperax"
+   },
+   {
+    "connected": "pad"
+   },
+   {
+    "belt": 3
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "F5 19 00 19 00 00 02 00 00 00 43 00 02 00 01 00 0E 00 00 00 00 F0 08 DF FA"
+   },
+   {
+    "update": 1.1
+   },
+   {
+    "writes_without_status": []
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "F5 18 00 19 00 00 10 00 00 00 3E 00 01 00 01 00 05 14 00 00 00 AC 4E FA"
+   },
+   {
+    "update": 1.1
+   },
+   {
+    "writes_without_status": [
+     "pad fff2 F5 0A 00 15 01 1A 00 EF B5 FA"
+    ]
+   },
+   {
+    "update": 1.1
+   },
+   {
+    "writes_without_status": []
+   },
+   {
+    "rx": "pad",
+    "char": "fff1",
+    "hex": "F5 18 00 19 00 00 10 00 00 00 41 00 02 00 01 00 0A 1C 00 00 00 63 83 FA"
+   },
+   {
+    "update": 1.1
+   },
+   {
+    "writes_without_status": [
+     "pad fff2 F5 0A 00 15 01 1E 00 6A D9 FA"
+    ]
+   },
+   {
+    "remove": "pad"
+   },
+   {
+    "writes_without_status": [
+     "pad fff2 F5 0A 00 15 00 00 00 D3 01 FA"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "csc",
+  "opts": {},
+  "steps": [
+   {
+    "add": "rb",
+    "name": "ROCKBROS C3",
+    "uuids": [
+     "1816",
+     "2a5b"
+    ],
+    "kind": "csc"
+   },
+   {
+    "connected": "rb"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 01 00 AB 02"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 03 00 01 08"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 04 00 AC 0A"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 06 00 02 10"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 07 00 AD 12"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 09 00 03 18"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 0A 00 AE 1A"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 0C 00 04 20"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "expect": {
+     "cadence": 90,
+     "moving": true,
+     "kind": "csc",
+     "speed_kmh": null
+    }
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 0C 00 04 20"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 0C 00 04 20"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 0C 00 04 20"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "expect": {
+     "cadence": 0,
+     "moving": false
+    }
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 EB 03 00 00 00 04"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 EE 03 00 00 00 08"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 F1 03 00 00 00 0C"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 F4 03 00 00 00 10"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 F7 03 00 00 00 14"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 FA 03 00 00 00 18"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 FD 03 00 00 00 1C"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 00 04 00 00 00 20"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 03 04 00 00 00 24"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 06 04 00 00 00 28"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "01 09 04 00 00 00 2C"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "expect": {
+     "speed_kmh": 22.7,
+     "moving": true,
+     "cadence": null,
+     "gait": "walk"
+    }
+   }
+  ]
+ },
+ {
+  "name": "combined",
+  "opts": {},
+  "steps": [
+   {
+    "add": "bike",
+    "name": "HT2405118",
+    "uuids": [
+     "1826",
+     "2ad2"
+    ]
+   },
+   {
+    "connected": "bike"
+   },
+   {
+    "add": "rb",
+    "name": "ROCKBROS C3",
+    "uuids": [
+     "1816"
+    ]
+   },
+   {
+    "connected": "rb"
+   },
+   {
+    "add": "h10",
+    "name": "Polar H10",
+    "uuids": [
+     "180d"
+    ]
+   },
+   {
+    "connected": "h10"
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 01 00 00 04"
+   },
+   {
+    "rx": "h10",
+    "char": "2a37",
+    "hex": "00 98"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 02 00 00 08"
+   },
+   {
+    "rx": "h10",
+    "char": "2a37",
+    "hex": "00 98"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 03 00 00 0C"
+   },
+   {
+    "rx": "h10",
+    "char": "2a37",
+    "hex": "00 98"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 04 00 00 10"
+   },
+   {
+    "rx": "h10",
+    "char": "2a37",
+    "hex": "00 98"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "FE 1F 00 0A 00 00 AA 00 00 00 00 00 00 0C 00 8C 00 00 00 00 00 00 00 00 82 00 3D 00 00 00"
+   },
+   {
+    "rx": "rb",
+    "char": "2a5b",
+    "hex": "02 05 00 00 14"
+   },
+   {
+    "rx": "h10",
+    "char": "2a37",
+    "hex": "00 98"
+   },
+   {
+    "update": 1.0
+   },
+   {
+    "expect": {
+     "speed_kmh": 25.6,
+     "cadence": 60,
+     "power": 140,
+     "hr": 152,
+     "moving": true,
+     "kind": "ftms_bike",
+     "sources": {
+      "speed": "bike",
+      "cadence": "rb",
+      "hr": "h10",
+      "power": "bike",
+      "moving": "rb"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "rsc + hr16",
+  "opts": {},
+  "steps": [
+   {
+    "add": "pod",
+    "name": "RunPod",
+    "uuids": [
+     "1814"
+    ]
+   },
+   {
+    "connected": "pod"
+   },
+   {
+    "add": "hr",
+    "name": "Strap",
+    "uuids": [
+     "180d"
+    ]
+   },
+   {
+    "connected": "hr"
+   },
+   {
+    "rx": "pod",
+    "char": "2a53",
+    "hex": "00 39 03 A0"
+   },
+   {
+    "rx": "hr",
+    "char": "2a37",
+    "hex": "01 B4 00"
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "expect": {
+     "speed_kmh": 11.6,
+     "cadence": 160,
+     "hr": 180,
+     "moving": true,
+     "kind": "rsc",
+     "gait": "sprint"
+    }
+   }
+  ]
+ }
+]

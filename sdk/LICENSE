@@ -3,9 +3,8 @@ OmniPlay SDK License
 Copyright (c) 2026 MightyX3N and the OmniPlay contributors
 
 This license covers the OmniPlay SDK: everything in the sdk/ folder of the OmniPlay
-repository and in the OmniPlay-SDK download (omniplay.h, omniplay.c, omniplay_client.dll,
-the Garry's Mod module and addon, omniplay.lua, the examples and the documentation).
-The OmniPlay app itself is licensed separately under the GNU GPL v3.
+repository and in the OmniPlay-SDK download (omniplay.lua, omniplay.js, OmniPlayBle.java and
+the documentation). The OmniPlay app itself is licensed separately under the GNU GPL v3.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this
 software and associated documentation files (the "Software"), to deal in the Software

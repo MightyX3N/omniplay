@@ -606,9 +606,6 @@ local function draw_ride(x, y, w, h)
   end
 end
 
--- ===== Games: GMod module install state (checked once, again after a button) =====
-local gm_status, gm_msg
-
 -- ===== Routes =====
 local function est_time(r) return (r.length / 1000) / 26 * 3600 + r.climb * 3 end
 
@@ -1069,7 +1066,7 @@ local function draw_games(x, y, w, h)
     local st = api.stats or {}
     ui.valbox("Hill sent", api.grade_target and string.format("%+.1f", api.grade_target) or "-", "%", api.grade_target and "to your bike" or "none", C.green, x + 18, cy + 56, vw, 72)
     ui.valbox("Your keys", api.take_input() and "paused" or "on", "", api.take_input() and "game reads you directly" or "", C.muted, x + 26 + vw, cy + 56, vw, 72)
-    ui.valbox("Game", g.via == "file bridge" and "GMod" or g.via == "shared memory" and "SDK" or "API", "", g.via or "", C.muted, x + 34 + 2 * vw, cy + 56, vw, 72)
+    ui.valbox("Game", g.via == "file bridge" and "GMod" or "API", "", g.via or "", C.muted, x + 34 + 2 * vw, cy + 56, vw, 72)
   else
     ui.text("No game connected", x + 18, cy, C.soft, "h")
     ui.text("Games and gamemodes that support OmniPlay connect by themselves while OmniPlay runs.", x + 18, cy + 34, C.muted, "s", cw - 36)
@@ -1077,31 +1074,12 @@ local function draw_games(x, y, w, h)
   ly = ly + 204
   -- garry's mod
   local gmh = api.gmod_dir and 170 or 100
-  cy = ui.card(x, ly, cw, gmh, "Garry's Mod support", not api.gmod_dir and { "Not found", C.soft, C.btn }
-    or (gm_status == "installed" and { "Module installed", C.green, C.ok_bg }) or (gm_status == "update" and { "Update", C.yellow, C.warn_bg })
-    or { "Found", C.green, C.ok_bg })
+  cy = ui.card(x, ly, cw, gmh, "Garry's Mod support", api.gmod_dir and { "Found", C.green, C.ok_bg } or { "Not found", C.soft, C.btn })
   if api.gmod_dir then
-    gm_status = gm_status or api.gmod_module_status()
-    local st = gm_status
-    local line = ({ installed = "OmniPlay module installed: gamemodes get your ride instantly, without files.",
-      update = "A newer OmniPlay module is here. Update it (with Garry's Mod closed).",
-      none = "Install the OmniPlay module and addon so gamemodes get your ride instantly. Without it they use the data folder.",
-      missing = "The module files are missing next to OmniPlay.exe; gamemodes use the data folder." })[st]
-    ui.text(gm_msg or line, x + 18, cy, gm_msg and C.yellow or C.soft, "s", cw - 36)
-    local bx = x + 18
-    if st == "none" or st == "update" then
-      if ui.button(st == "none" and "Install" or "Update", bx, cy + 72, 120, 36, "yellow", "s") then
-        local ok, err = api.gmod_install(); gm_msg = not ok and err or nil; gm_status = nil
-      end
-      bx = bx + 134
-    end
-    if st == "installed" or st == "update" then
-      if ui.button("Uninstall", bx, cy + 72, 120, 36, "dark", "s") then
-        local ok, err = api.gmod_uninstall(); gm_msg = not ok and err or nil; gm_status = nil
-      end
-      bx = bx + 134
-    end
-    if ui.button("Open data folder", bx, cy + 72, 160, 36, "dark", "s") then love.system.openURL("file:///" .. api.gmod_dir:gsub("\\", "/")) end
+    ui.text(api.gmod_dir, x + 18, cy, C.soft, "s", cw - 36)
+    ui.text("Gamemodes with the omniplay_bridge addon read your ride through this data folder.",
+      x + 18, cy + 44, C.muted, "xs", cw - 36)
+    if ui.button("Open folder", x + 18, cy + 72, 130, 36, "dark", "s") then love.system.openURL("file:///" .. api.gmod_dir:gsub("\\", "/")) end
   else
     ui.text("Garry's Mod wasn't found in your Steam libraries.", x + 18, cy, C.soft, "s", cw - 36)
   end

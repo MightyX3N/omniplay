@@ -1,131 +1,118 @@
 # OmniPlay SDK
 
-Make your game move with the player's real bike, walking pad or footpod, and send hills back to
-the machine. The player runs the OmniPlay app; your game reads it through a small block of
-shared memory on the same PC. Reading takes about a microsecond, so you can do it every frame.
+Talk to the player's bike, walking pad, speed / cadence sensor, footpod and heart-rate strap
+directly from your game, without the OmniPlay app. Runs in browsers, on Android, on desktop,
+in any engine that has Lua or JavaScript.
 
-The SDK is free for any game, open-source or commercial. The one rule: OmniPlay support can't be
-sold separately (as DLC, an add-on or an unlock). See [`sdk/LICENSE`](../sdk/LICENSE).
+Free for any game, open-source or commercial. One rule: OmniPlay support can't be sold
+separately (DLC, add-on, unlock). See [`sdk/LICENSE`](../sdk/LICENSE).
 
-| You make | Use | Files |
-|---|---|---|
-| a Garry's Mod gamemode or addon | the `OmniPlay.*` Lua API from the addon | `gmod/omniplay_bridge` (+ the module, installed by OmniPlay) |
-| a LÖVE / LuaJIT game | one Lua file, no DLL | `love/omniplay.lua` |
-| a C / C++ game | compile one file in, or link the DLL | `omniplay.h`, `omniplay.c` / `bin/x64/omniplay_client.dll` |
-| Unity, Godot (C#), anything with a C FFI | the DLL | `bin/x64/omniplay_client.dll`, `examples/unity/OmniPlay.cs` |
-| a website | not possible: OmniPlay refuses browsers, so websites can't control someone's machine | |
+| File | What it is |
+|---|---|
+| `lua/omniplay.lua` | the core in pure Lua (5.1 to 5.4, LuaJIT): LÖVE desktop and Android, love.js, GMod, any Lua |
+| `js/omniplay.js` | the same core as a JavaScript module, plus `connectWebBluetooth()` for browsers |
+| `android/OmniPlayBle.java` | the Bluetooth side for Android apps |
 
-Other languages can read the shared memory directly; the layout is at the bottom of `omniplay.h`.
-WebSocket access for tools and scripts is in [API.md](API.md).
+The core knows the devices: which services to use, decoding their data, the commands for
+hills and belt speed, starting the machine, combining several devices, gait and start/stop
+events. It does **no Bluetooth and no OS calls**. Your platform's Bluetooth gives it the bytes it
+receives and sends the bytes it asks for. That's why the same code runs everywhere, and why
+both cores are tested with the same recorded device data (`tests/sdk/vectors.json`).
 
-## How it behaves
+Supported: FTMS bikes and treadmills (e.g. Christopeit EM 8000), Sperax walking pads, CSC speed /
+cadence sensors in either mode (e.g. Rockbros C3), RSC footpods (e.g. Zwift RunPod), heart-rate
+straps (e.g. Polar H10).
 
-- **Always optional.** When OmniPlay isn't running, every read returns nothing and every request is
-  ignored. Keep keyboard / controller controls; players without OmniPlay still play.
-- **Values** (OmniPlay → game, 20 times a second): speed, cadence, power, heart rate, the hill
-  currently on the machine, distance, `moving`, `gait` (stopped / walk / run / sprint from the
-  player's profile) and the kind of machine (bike, treadmill, footpod). Unknown numbers are
-  nil / NaN. The full state as JSON also has the device name, whether the camera sees the feet, the
-  recording state and more ([API.md](API.md#state-omniplay--game)).
-- **Requests** (game → OmniPlay) are state, not events. OmniPlay keeps the last values:
-  - `game`: your game's name, shown in OmniPlay and saved with the workout.
-  - `grade`: hill in % (−10 to +20; nil / NaN = flat). OmniPlay ramps it smoothly and only applies it if the player allows hills.
-  - `belt_speed`: treadmill speed in km/h. Only if the player allows it; never above their max.
-  - `take_input`: true = OmniPlay stops pressing keys, because you read the values yourself.
-- **Connected while you read.** Your game counts as connected while it keeps reading (every frame is
-  fine, at least once a second). 3 seconds after it stops, OmniPlay flattens the hill and turns the
-  keys back on. Call `release()` on quit to do that at once.
-- **Ride routes vs. games:** while a game sends a hill, it wins over the player's GPX route.
+## The core
 
-## Garry's Mod
+Lua (`OmniPlay.new`) and JS (`OmniPlay.create`) have the same functions; JS uses camelCase.
 
-Ship the `omniplay_bridge` addon with your gamemode (or `AddCSLuaFile` + `include` its one file).
-In OmniPlay's Games tab the player presses **Install**: that puts the module
-(`gmcl_omniplay_win32.dll` / `gmcl_omniplay_win64.dll`) into `garrysmod/lua/bin` and the addon into
-`garrysmod/addons`. Without the module the addon falls back to files in `garrysmod/data/omniplay`;
-the API is the same either way (`OmniPlay.Native` says which one is in use).
-
-Client:
 ```lua
-OmniPlay.IsConnected()          -- OmniPlay running and sending
-OmniPlay.Get()                  -- table or nil: speed_kmh, cadence, power, hr, steps, moving, gait, grade,
-                                --   connected, device = { name, kind, hills, belt_speed, max_speed }, distance_m, elapsed_s
-OmniPlay.SetGame("My Gamemode")
-OmniPlay.SetGrade(4.5)          -- nil = flat
-OmniPlay.SetBeltSpeed(3)
-OmniPlay.TakeInput(true)        -- stop OmniPlay's key presses while your gamemode reads Get()
-OmniPlay.SetInfo("text")        -- a line in OmniPlay's log, for debugging
-hook.Add("OmniPlay_Data", "x", function(d) end)   -- every new state
+local OmniPlay = require("omniplay")
+local op = OmniPlay.new{
+  send = function(id, char_uuid, bytes) end,   -- write bytes to that characteristic (your Bluetooth)
+  on_event = function(name, value) end,        -- "start", "stop", "gait" (walk / run / sprint / stopped)
+  -- optional: allow_hills (true), allow_belt (false), max_belt_kmh (4), wheel_mm (2105),
+  --           gait = { walk = { pad_kmh = 1, rpm = 30 }, run = { pad_kmh = 3.5, rpm = 70 }, sprint = { pad_kmh = 5, watts = 200 } }
+}
 ```
 
-Server (each client forwards its data up to 10 times a second; treat it like any client input):
-```lua
-ply:OmniPlayData()              -- speed_kmh, cadence, power, hr, moving, gait, grade, kind, camera
-ply:OmniPlaySetGrade(4.5)       -- nil = flat
-ply:OmniPlayTakeInput(true)
-hook.Add("OmniPlay_PlayerData", "x", function(ply, d) end)
+| Call | When |
+|---|---|
+| `OmniPlay.SERVICES` | the service UUIDs to scan for |
+| `op:add(id, name, uuids)` | a device connected and its services / characteristics are known. Returns the kind, or nil if it isn't a fitness device OmniPlay knows |
+| `op:notify_chars(id)` | the characteristics to subscribe to |
+| `op:connected(id)` | subscriptions are on. Starts the machine (FTMS needs a start command) |
+| `op:receive(id, char_uuid, bytes)` | every notification. Bytes: Lua string or byte array; JS Uint8Array / DataView / array |
+| `op:update(dt)` | every frame, seconds since the last. Polls the Sperax, retries starts, ramps the belt, sends hills |
+| `op:values()` | the player's numbers (below) |
+| `op:set_grade(pct)` | hill in % (−10 to 20), nil = flat. Bikes get resistance, treadmills that tilt get incline |
+| `op:set_belt_speed(kmh)` | treadmill / walking pad speed. Only with `allow_belt`, never above `max_belt_kmh`, ramped, never starts a stopped belt |
+| `op:remove(id)` | the device disconnected. Stops a belt the game was driving, then forgets it |
+| `OmniPlay.walk_factor(grade)` | walking speed on a slope relative to flat (for walking pads on hilly terrain) |
+
+`values()` returns `speed_kmh, cadence, power, hr, steps` (nil when unknown), `moving`, `gait`,
+`kind`, `grade`, `distance_m` and `elapsed_s` (counted while moving), `devices` (id, name, kind,
+label, fresh) and `sources` (which device each number came from). With several devices the
+best source wins: a speed / cadence sensor decides cadence, speed and start/stop (it reacts within
+a second, consoles often take 2 or more), a heart-rate strap decides heart rate.
+
+Let the player choose `allow_belt` and `max_belt_kmh` themselves: they're standing on the belt.
+
+## Browsers
+
+```js
+import { OmniPlay, connectWebBluetooth } from "./omniplay.js";
+const op = OmniPlay.create({ onEvent: (name, value) => console.log(name, value) });
+connectButton.onclick = () => connectWebBluetooth(op);   // the browser needs a click; call again for more devices
+function frame(dt) { op.update(dt); const v = op.values(); /* move the player with v.speed_kmh */ }
+op.setGrade(4.5);
 ```
 
-Console: `omniplay_status` (shows module or data folder, and the live numbers), `omniplay_hill 5`.
+`connectWebBluetooth` shows the browser's device picker, connects, subscribes and reconnects if
+the device drops. Web Bluetooth exists in Chrome and Edge on Windows, Mac, Linux, ChromeOS and
+Android, over HTTPS (or `localhost`). Safari, Firefox and all iPhone browsers don't have it, so
+no website can reach the devices there.
 
-A complete small example: [`examples/gmod/omniplay_example.lua`](../sdk/examples/gmod/omniplay_example.lua)
-(moves players with their real speed in `SetupMove`, sends the slope under the player as the hill).
+## Android
 
-Tips for gamemodes:
-- Movement: `SetupMove` on the server with `ply:OmniPlayData().speed_kmh` (1 km/h ≈ 14.6 units/s).
-  Let `cmd:GetForwardMove()` win when the player uses the keyboard.
-- Hills: trace the ground ahead of the player a few times a second and `SetGrade` the slope.
-  Clamp jumps from props or stairs; OmniPlay already smooths at 4 % per second.
-- Call `TakeInput(true)` only once you actually move the player from the data, otherwise
-  OmniPlay's W-key output is the fallback that already works in every gamemode.
+`OmniPlayBle.java` scans, connects, subscribes and writes with Android's Bluetooth API, in a queue
+(Android allows one Bluetooth operation at a time; that's why notifications often never arrive in
+hand-written code). Wire its listener to the core:
 
-## LÖVE / LuaJIT
+| `OmniPlayBle.Listener` | core |
+|---|---|
+| `onFound(address, name, rssi)` | show it in your device list, then `ble.connect(address)` |
+| `onServices(address, name, uuids)` | `add(address, name, uuids)`; return `notify_chars(address)`, or null if `add` returned nil |
+| `onReady(address)` | `connected(address)` |
+| `onData(address, char, bytes)` | `receive(address, char, bytes)` |
+| `onLost(address)` | `remove(address)` (it reconnects by itself) |
+| core `send(id, char, bytes)` | `ble.write(id, char, bytes)` |
 
-Copy `love/omniplay.lua` next to `main.lua`:
-```lua
-local omniplay = require("omniplay")
-omniplay.set_game("My Game")
-function love.update(dt)
-  local v = omniplay.values()   -- nil when OmniPlay isn't running
-  if v then player.speed = v.speed_kmh / 3.6 end
-  omniplay.set_grade(slope_here) -- nil = flat
-end
-function love.quit() omniplay.release() end
+Permissions: `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` on Android 12+, `BLUETOOTH`,
+`BLUETOOTH_ADMIN` and `ACCESS_FINE_LOCATION` before that.
+
+- **Unity / Godot / Kotlin / Java apps** call `OmniPlayBle` directly and use the JS core, or port the calls.
+- **Capacitor / Cordova / React Native** can use `js/omniplay.js` with their own Bluetooth plugin instead.
+- **LÖVE on Android** has no way to call Java from Lua out of the box. The APK needs a few lines of JNI
+  in love-android's activity that forward `OmniPlayBle`'s listener to Lua and `send` back.
+
+## Desktop
+
+- **Browsers and Electron:** `connectWebBluetooth`.
+- **LÖVE / native games:** the core with the platform's Bluetooth: WinRT on Windows (OmniPlay's own
+  `omniplay_ble.dll` does this), BlueZ on Linux, CoreBluetooth on macOS. Or, when the OmniPlay app
+  is installed, use its [API](API.md) instead; that also covers players whose devices are already
+  connected to the app.
+
+Don't connect to the same device from the app and your game at once: most devices accept only one connection.
+
+## Tests
+
 ```
-`values()` returns `speed_kmh, cadence, power, hr, grade, distance_m, elapsed_s, steps, moving,
-gait, kind, connected`. `state_json()` returns the full state as JSON text and a sequence number.
-Setters: `set_game`, `set_grade`, `set_belt_speed`, `take_input`, `set_info`, `release`.
-Works on Windows and Linux. Example: [`examples/love/main.lua`](../sdk/examples/love/main.lua).
-
-## C / C++ and the DLL
-
-```c
-#include "omniplay.h"
-OmniPlayValues v;
-omniplay_set_game("My Game");
-if (omniplay_values(&v)) speed = v.speed_kmh;   /* every frame */
-omniplay_set_grade(4.5f);                       /* NAN = flat */
-omniplay_release();                             /* on quit */
+luajit tests/test_sdk.lua        # Lua core (also: lua5.1 / lua5.4)
+node tests/sdk/test_sdk.mjs      # JS core + Web Bluetooth adapter against a fake browser
 ```
-Compile `omniplay.c` into your game, or use `bin/x64/omniplay_client.dll` (`bin/x86/` for 32-bit)
-with `-DOMNIPLAY_USE_DLL`. All functions are plain C (`cdecl`), so C#, Rust, Python ctypes, Godot
-GDExtension and others can call the DLL. C# bindings: [`examples/unity/OmniPlay.cs`](../sdk/examples/unity/OmniPlay.cs).
-
-## Testing without the app or hardware
-
-`tools/omniplay_sim.lua` pretends to be OmniPlay with a simulated rider and prints what your game
-asks for:
-```
-luajit tools/omniplay_sim.lua            # bike, 20-30 km/h in waves (power follows your hill)
-luajit tools/omniplay_sim.lua walk       # walking pad at 4 km/h
-luajit tools/omniplay_sim.lua stop       # connected, standing still
-luajit tools/omniplay_sim.lua bike 10    # stop after 10 s, for automatic tests
-```
-It runs on Windows and Linux, so automatic tests on a Linux machine work too: start the simulator,
-run your game (or its logic in plain LuaJIT with `love/omniplay.lua`), check what it printed.
-
-## Version
-
-Shared-memory layout version 1 (`OMNIPLAY_VERSION`). New fields get added to the JSON state;
-the fixed layout only changes with a new version number and a new shared-memory name, so old
-games keep working.
+Both run `tests/sdk/vectors.json`, built by `tests/sdk/make_vectors.py`: device conversations with
+packets captured from real devices (EM 8000, SPERAX_RM01) and from the Bluetooth specs, checking
+values, the exact bytes sent and the events. Add a device there and both cores must pass it.

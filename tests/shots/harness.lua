@@ -79,7 +79,7 @@ function love.load()
   -- Garry's Mod found, module bundled but not installed yet
   local api_ = require("api")
   api_.gmod_dir = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\data"
-  api_.gmod_module_status = function() return "none" end
+
   sim(130)
   -- routes: a made-up hilly loop, plus any real GPX files handed in through OMNI_GPX (kept out of the repo)
   local route = require("route")
