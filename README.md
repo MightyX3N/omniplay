@@ -1,12 +1,11 @@
 # OmniPlay
 
-Your bike, treadmill or walking pad is the controller. OmniPlay is three things:
+Your bike, treadmill or walking pad is the controller. OmniPlay is two things:
 
 - **The SDK**: connects bikes, treadmills, walking pads, footpods and heart-rate straps straight to any game, without the OmniPlay app. Ready to use.
 - **The app**: pairs your devices with a live test, and later works as a bridge that turns your movement into input for other games.
-- **The game**: a 3D world you ride, walk or run through. It is a fork of [REZVIVO](https://github.com/thpg/rezvivo) (GPL-3.0), which builds real places from OpenStreetMap and has hand-made Dream Worlds. OmniPlay adds ghosts and segment races, live riders nearby over playit.gg, exploring goals, unlocks, a roguelike tour mode, weekly events, Lua mods and asset packs, Android, and walking pads and treadmills through the SDK running inside the game.
 
-**Status:** the SDK and the app's pairing are done and tested on real hardware. The game is planned; see [ROADMAP.md](ROADMAP.md) for what it will do and in what order, and the [website](https://omniplay.dovecross.site) for an overview.
+**Status:** the SDK and the app's pairing are done and tested on real hardware. See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## Running the app
 
@@ -34,10 +33,6 @@ Supported: FTMS bikes and treadmills (e.g. Christopeit EM 8000), Sperax walking 
 - `tools/pack_characters.py`: builds the character sheets from the Mucho Pixels pack
 
 GitHub Actions tests the SDK and the app on every push, then builds the Windows app and the SDK zip.
-
-## Credits
-
-The OmniPlay game will be built on [REZVIVO](https://github.com/thpg/rezvivo) by its authors (GPL-3.0-or-later).
 
 ## Licence
 

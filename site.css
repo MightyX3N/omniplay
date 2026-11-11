@@ -43,6 +43,7 @@ h3 { font-size: 16px; font-weight: 600; margin: 8px 0 4px; }
 
 .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .grid.three { grid-template-columns: repeat(3, 1fr); }
+.grid.two { grid-template-columns: repeat(2, 1fr); }
 .card { border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
 .card i { font-size: 24px; color: var(--accent); }
 .card p { margin: 0; font-size: 14px; color: var(--muted); }
@@ -68,7 +69,7 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
 
 @media (max-width: 820px) {
   .grid { grid-template-columns: repeat(2, 1fr); }
-  .grid.three { grid-template-columns: 1fr; }
+  .grid.three, .grid.two { grid-template-columns: 1fr; }
   .cols { grid-template-columns: 1fr; }
   .links a.hide-sm { display: none; }
 }
