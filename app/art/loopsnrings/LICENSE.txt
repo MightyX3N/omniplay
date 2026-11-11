@@ -1,0 +1,4 @@
+"Loops N' Rings" pixel art pack (and its sister packs used by OmniPlay: "Jumps N' Pipes",
+"Industrial Punk"), released under CC0 1.0 (public domain) by their author.
+
+tileset.png is the pack's tileset as is. hills.png is a crop of the pack's own example scene.

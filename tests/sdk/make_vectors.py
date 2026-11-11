@@ -49,8 +49,8 @@ S.append({"name": "bike", "opts": {}, "steps": [
   {"expect": {"speed_kmh": 0, "cadence": 0, "power": 0, "moving": False, "gait": "stopped", "kind": "ftms_bike"}},
   {"writes": ["bike 2ad9 11 00 00 00 00 28 33"]},  # flat to start with
   {"rx": "bike", "char": "2ad2", "hex": PEDAL}, {"update": 0.1},
-  {"expect": {"speed_kmh": 25.6, "cadence": 85, "power": 140, "hr": 130, "moving": True, "gait": "run"}},
-  {"events": [["start"], ["gait", "run"]]},
+  {"expect": {"speed_kmh": 25.6, "cadence": 85, "power": 140, "hr": 130, "moving": True, "gait": "sprint"}},
+  {"events": [["start"], ["gait", "sprint"]]},
   {"grade": 5}, {"update": 0.3},
   {"writes": ["bike 2ad9 11 00 00 F4 01 28 33"]},
   {"grade": -2}, {"update": 0.1}, {"writes": []}, {"update": 0.2},  # at most 4 a second
@@ -108,6 +108,16 @@ for i in range(1, 6):
 st += [{"expect": {"speed_kmh": 25.6, "cadence": 60, "power": 140, "hr": 152, "moving": True, "kind": "ftms_bike",
                    "sources": {"speed": "bike", "cadence": "rb", "hr": "h10", "power": "bike", "moving": "rb"}}}]
 S.append({"name": "combined", "opts": {}, "steps": st})
+# 6. sprint on a bike that reports little power: cadence decides (85 rpm), power can too (200 W)
+st = [{"add": "bike", "name": "HT2405118", "uuids": ["1826", "2ad2"]}, {"connected": "bike"},
+      {"add": "rb", "name": "ROCKBROS C3", "uuids": ["1816"]}, {"connected": "rb"}]
+for i in range(1, 8):  # 100 rpm: a revolution every 0.6 s (614/1024 s)
+    st += [{"rx": "bike", "char": "2ad2", "hex": PEDAL}, {"rx": "rb", "char": "2a5b", "hex": crank(i, i * 614)}, {"update": 0.6}]
+st += [{"expect": {"cadence": 100, "power": 140, "gait": "sprint"}}]
+for i in range(8, 16):  # 80 rpm: still run
+    st += [{"rx": "bike", "char": "2ad2", "hex": PEDAL}, {"rx": "rb", "char": "2a5b", "hex": crank(i, 7 * 614 + (i - 7) * 768)}, {"update": 0.75}]
+st += [{"expect": {"cadence": 80, "gait": "run"}}]
+S.append({"name": "sprint by cadence", "opts": {}, "steps": st})
 # 6. footpod and 16-bit heart rate
 S.append({"name": "rsc + hr16", "opts": {}, "steps": [
   {"add": "pod", "name": "RunPod", "uuids": ["1814"]}, {"connected": "pod"},

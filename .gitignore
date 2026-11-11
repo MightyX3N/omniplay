@@ -1,2 +1,5 @@
 build/
 dist/
+# made by build.sh
+app/lib/omniplay.lua
+app/version.lua

@@ -281,7 +281,7 @@ local DEFAULTS = {
   allow_belt = false,       -- let the game change a treadmill / walking pad's speed (off unless the player says so)
   max_belt_kmh = 4,         -- never above this
   belt_ramp = 0.5,          -- km/h per second
-  gait = { walk = { pad_kmh = 1.0, rpm = 30 }, run = { pad_kmh = 3.5, rpm = 70 }, sprint = { pad_kmh = 5.0, watts = 200 } },
+  gait = { walk = { pad_kmh = 1.0, rpm = 30 }, run = { pad_kmh = 3.5, rpm = 70 }, sprint = { pad_kmh = 5.0, watts = 200, rpm = 85 } },
 }
 
 -- opts: send(id, char_uuid, bytes) [required], on_event(name, value) and any DEFAULTS

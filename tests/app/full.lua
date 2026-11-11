@@ -1,0 +1,82 @@
+local function conn(app, addr) return app.devices.conns[addr] end
+local BIKE, PAD, CSC, HR, OTHER = "C0FFEE000001", "C0FFEE000002", "C0FFEE000003", "C0FFEE000004", "C0FFEE000005"
+local function v(app) return app.op:values() end
+return {
+  { wait = 0.4 }, { shot = "10_start" },
+  { check = function(app) return #app.devices.list() == 0, "should start with no devices" end, name = "starts empty" },
+  { press = "chip" }, { wait = 2.0 },
+  { check = function(app) return #app.devices.nearby() == 4, "nearby: " .. #app.devices.nearby() end, name = "4 fitness devices nearby (headphones hidden)" },
+  { shot = "11_pair_nearby" },
+  -- connect the bike
+  { press = "near:" .. BIKE }, { wait = 0.3 }, { shot = "12_bike_exploring" }, { wait = 2.0 },
+  { check = function(app) local c = conn(app, BIKE); return c and c.state == "connected" and c.kind == "ftms_bike", c and (c.state .. " " .. tostring(c.kind)) end, name = "bike connects as FTMS bike" },
+  { check = function(app) local d = app.bt.debug()[BIKE]; return d and d.writes >= 3, "writes " .. tostring(d and d.writes) end, name = "SDK started the bike (control + reset + start)" },
+  { check = function(app) return app.settings.data.devices[BIKE] ~= nil, "not remembered" end, name = "bike remembered" },
+  { check = function(app) return v(app).gait == "stopped", v(app).gait end, name = "stopped while not pedalling" },
+  { effort = 1 }, { wait = 1.5 },
+  { check = function(app) local x = v(app); return x.gait == "walk" and math.abs((x.cadence or 0) - 50) < 1, x.gait .. " cad " .. tostring(x.cadence) end, name = "easy pedalling = walk, 50 rpm" },
+  { shot = "13_bike_walk" },
+  { effort = 2 }, { wait = 1.5 },
+  { check = function(app) local x = v(app); return x.gait == "run" and x.power == 165 and math.abs(x.speed_kmh - 26) < 0.1, x.gait .. " " .. tostring(x.power) end, name = "harder = run, 165 W, 26 km/h" },
+  { shot = "14_bike_run" },
+  { effort = 3 }, { wait = 1.5 },
+  { check = function(app) local x = v(app); return x.gait == "sprint", x.gait end, name = "250 W = sprint" },
+  { shot = "15_bike_sprint" },
+  -- add the cadence sensor and the strap
+  { press = "near:" .. CSC }, { wait = 0.3 }, { press = "near:" .. HR }, { wait = 4.5 },
+  { check = function(app) return conn(app, CSC).state == "connected" and conn(app, HR).state == "connected", conn(app, CSC).state .. " " .. conn(app, HR).state end, name = "sensor and strap connect (one explore at a time)" },
+  { check = function(app) local x = v(app); return x.sources.cadence == CSC, "cadence from " .. tostring(x.sources.cadence) end, name = "cadence comes from the sensor" },
+  { check = function(app) local x = v(app); return x.hr == 162 and x.sources.hr == HR, "hr " .. tostring(x.hr) end, name = "heart rate from the strap" },
+  { shot = "16_three_devices" },
+  { effort = 0 }, { wait = 3.5 },
+  { check = function(app) return v(app).gait == "stopped" and not v(app).moving, v(app).gait end, name = "stopping pedalling = stopped" },
+  -- headphones: shown with "my device isn't listed", connecting says it's unknown
+  { press = "showall" }, { wait = 0.2 }, { press = "near:" .. OTHER }, { wait = 1.5 },
+  { check = function(app) local c = conn(app, OTHER); return c and c.state == "unknown", c and c.state end, name = "headphones: OmniPlay doesn't know it" },
+  { shot = "17_unknown_device" },
+  { press = "dev:" .. OTHER }, { wait = 0.2 },
+  { check = function(app) return conn(app, OTHER) == nil, "still listed" end, name = "remove unknown device" },
+  { press = "showall" },
+  -- start screen chip shows the bike and speed
+  { press = "done" }, { effort = 2 }, { wait = 1.2 }, { shot = "18_start_connected" },
+  -- settings
+  { press = "settings" }, { wait = 0.3 }, { shot = "19_settings" },
+  { press = "belt" }, { press = "belt+" }, { press = "belt+" },
+  { check = function(app) return app.op.allow_belt == true and app.op.max_belt_kmh == 5, tostring(app.op.max_belt_kmh) end, name = "belt settings reach the SDK" },
+  { press = "hills" },
+  { check = function(app) return app.op.allow_hills == false, "hills still on" end, name = "hills off reaches the SDK" },
+  { press = "hills" },
+  { press = "look+" }, { press = "look+" }, { press = "outfit+" }, { press = "shirt3" }, { wait = 0.3 }, { shot = "20_settings_changed" },
+  { check = function(app) local d = app.settings.data; return d.look == 3 and d.outfit == 2, d.look .. " " .. d.outfit end, name = "look and outfit change" },
+  { press = "done" },
+  -- hills reach the bike
+  { check = function(app) app.op:set_grade(6); return true end, name = "game asks for a 6% hill" }, { wait = 0.6 },
+  { check = function(app) local d = app.bt.debug()[BIKE]; return d.grade and math.abs(d.grade - 6) < 0.01, "bike got " .. tostring(d.grade) end, name = "bike receives 6% simulation" },
+  -- the bike drops and comes back
+  { check = function(app) local c = conn(app, BIKE); app.bt.drop[BIKE] = true; app.bt.close(c.h); return true end, name = "bike drops" },
+  { wait = 0.3 },
+  { check = function(app) return conn(app, BIKE).state == "reconnecting", conn(app, BIKE).state end, name = "app notices and reconnects" },
+  { press = "chip" }, { wait = 0.2 }, { shot = "21_reconnecting" },
+  { wait = 8 },
+  { check = function(app) return conn(app, BIKE).state == "connected", conn(app, BIKE).state end, name = "bike back after a failed retry" },
+  -- the walking pad
+  { press = "near:" .. PAD }, { wait = 2.5 },
+  { check = function(app) return conn(app, PAD).state == "connected" and conn(app, PAD).kind == "sperax", conn(app, PAD).state end, name = "walking pad connects as Sperax" },
+  -- forget the bike and the sensor so the pad leads
+  { press = "dev:" .. BIKE }, { press = "dev:" .. CSC }, { wait = 0.2 },
+  { check = function(app) return app.settings.data.devices[BIKE] == nil, "bike still remembered" end, name = "disconnect forgets" },
+  { effort = 2 }, { wait = 3.5 },
+  { check = function(app) local x = v(app); return x.kind == "sperax" and x.speed_kmh > 3 and x.gait == "run", tostring(x.kind) .. " " .. tostring(x.speed_kmh) .. " " .. x.gait end, name = "pad at 3.8 km/h = run" },
+  { shot = "22_pad_run" },
+  { check = function(app) app.op:set_belt_speed(4.5); return true end, name = "game asks the belt for 4.5 km/h (max 5)" }, { wait = 4 },
+  { check = function(app) local d = app.bt.debug()[PAD]; return d.cmd_kmh and d.cmd_kmh > 3.8, "pad got " .. tostring(d.cmd_kmh) end, name = "pad receives speed commands" },
+  { check = function(app) app.op:set_belt_speed(nil); return true end, name = "game lets go of the belt" },
+  -- scrolling and resizing
+  { resize = { 1600, 900 } }, { wait = 0.4 }, { shot = "23_big_window" },
+  { resize = { 1000, 700 } }, { wait = 0.4 }, { shot = "24_narrow_window" },
+  { press = "back" }, { wait = 0.2 },
+  { press = "play" }, { wait = 0.3 }, { shot = "25_play_soon" }, { press = "ok" },
+  { press = "bridge" }, { wait = 0.2 }, { key = "escape" },
+  { press = "together" }, { wait = 0.2 }, { key = "escape" }, { wait = 0.2 },
+  { check = function(app) return app.stack[#app.stack].name == "start", app.stack[#app.stack].name end, name = "back to start" },
+}

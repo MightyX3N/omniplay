@@ -205,7 +205,7 @@ export const walkFactor = (grade) => Math.exp(-3.5 * (Math.abs(grade / 100 + 0.0
 // ---------- a session ----------
 const DEFAULTS = {
   wheel_mm: 2105, allow_hills: true, allow_belt: false, max_belt_kmh: 4, belt_ramp: 0.5,
-  gait: { walk: { pad_kmh: 1.0, rpm: 30 }, run: { pad_kmh: 3.5, rpm: 70 }, sprint: { pad_kmh: 5.0, watts: 200 } },
+  gait: { walk: { pad_kmh: 1.0, rpm: 30 }, run: { pad_kmh: 3.5, rpm: 70 }, sprint: { pad_kmh: 5.0, watts: 200, rpm: 85 } },
 };
 
 export class Session {

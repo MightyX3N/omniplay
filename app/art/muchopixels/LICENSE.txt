@@ -1,0 +1,9 @@
+Character art: "Character Animation Asset Pack" by Mucho Pixels
+https://muchopixels.itch.io/character-animation-asset-pack
+
+These files are NOT under OmniPlay's GPL-3.0 licence. They are used in OmniPlay under the
+GameDev Market licence the pack comes with, and may not be reused outside OmniPlay. To use them
+in your own project, get the pack from the link above.
+
+The sheets here were built from the pack's frames by tools/pack_characters.py (one sheet per
+character and outfit, the shirt swapped for marker colours so each player gets their own colour).

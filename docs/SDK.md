@@ -33,7 +33,7 @@ local op = OmniPlay.new{
   send = function(id, char_uuid, bytes) end,   -- write bytes to that characteristic (your Bluetooth)
   on_event = function(name, value) end,        -- "start", "stop", "gait" (walk / run / sprint / stopped)
   -- optional: allow_hills (true), allow_belt (false), max_belt_kmh (4), wheel_mm (2105),
-  --           gait = { walk = { pad_kmh = 1, rpm = 30 }, run = { pad_kmh = 3.5, rpm = 70 }, sprint = { pad_kmh = 5, watts = 200 } }
+  --           gait = { walk = { pad_kmh = 1, rpm = 30 }, run = { pad_kmh = 3.5, rpm = 70 }, sprint = { pad_kmh = 5, watts = 200, rpm = 85 } }
 }
 ```
 
@@ -58,6 +58,9 @@ best source wins: a speed / cadence sensor decides cadence, speed and start/stop
 a second, consoles often take 2 or more), a heart-rate strap decides heart rate.
 
 Let the player choose `allow_belt` and `max_belt_kmh` themselves: they're standing on the belt.
+
+Gait on a bike: walk from 30 rpm, run from 70 rpm, sprint from 85 rpm or 200 W (whichever comes first;
+many bikes report power and cadence badly and late, so a cadence sensor decides when there is one). Walking pads and footpods go by speed.
 
 ## Browsers
 
