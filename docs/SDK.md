@@ -42,9 +42,9 @@ local op = OmniPlay.new{
 | `OmniPlay.SERVICES` | the service UUIDs to scan for |
 | `op:add(id, name, uuids)` | a device connected and its services / characteristics are known. Returns the kind, or nil if it isn't a fitness device OmniPlay knows |
 | `op:notify_chars(id)` | the characteristics to subscribe to |
-| `op:connected(id)` | subscriptions are on. Starts the machine (FTMS needs a start command) |
-| `op:receive(id, char_uuid, bytes)` | every notification. Bytes: Lua string or byte array; JS Uint8Array / DataView / array |
-| `op:update(dt)` | every frame, seconds since the last. Polls the Sperax, retries starts, ramps the belt, sends hills |
+| `op:connected(id)` | subscriptions are on. Starts the machine (FTMS: take control, then start; no reset, which would clear the console's workout) |
+| `op:receive(id, char_uuid, bytes)` | every notification, including the FTMS control point's answers (subscribe to everything `notify_chars` lists). Bytes: Lua string or byte array; JS Uint8Array / DataView / array |
+| `op:update(dt)` | every frame, seconds since the last. Polls the Sperax, ramps the belt, sends hills |
 | `op:values()` | the player's numbers (below) |
 | `op:set_grade(pct)` | hill in % (−10 to 20), nil = flat. Bikes get resistance, treadmills that tilt get incline |
 | `op:set_belt_speed(kmh)` | treadmill / walking pad speed. Only with `allow_belt`, never above `max_belt_kmh`, ramped, never starts a stopped belt |
@@ -56,6 +56,11 @@ local op = OmniPlay.new{
 label, fresh) and `sources` (which device each number came from). With several devices the
 best source wins: a speed / cadence sensor decides cadence, speed and start/stop (it reacts within
 a second, consoles often take 2 or more), a heart-rate strap decides heart rate.
+
+FTMS machines get one command at a time: the next goes when the machine answers the last one, or
+after 0.3 s without an answer (the way qdomyos-zwift drives hundreds of trainers). A newer hill or
+belt speed replaces one still waiting, so a busy machine gets the latest, not a backlog. Your
+`send` should just write and return; it never needs to wait.
 
 Let the player choose `allow_belt` and `max_belt_kmh` themselves: they're standing on the belt.
 

@@ -27,6 +27,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 zip
       - name: Build
         run: sh build.sh
+      - name: Test the Windows Bluetooth helper's write queue (under Wine)
+        run: |
+          sudo apt-get install -y wine64
+          x86_64-w64-mingw32-gcc -O2 -o build/test_writes.exe tests/native/test_writes.c -lruntimeobject -lole32 -lws2_32 -static-libgcc -static
+          WINEDEBUG=-all wine build/test_writes.exe
       - uses: actions/upload-artifact@v4
         with:
           name: OmniPlay-windows

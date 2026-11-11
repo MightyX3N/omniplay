@@ -55,15 +55,18 @@ export function detect(uuids, name) {
 // ---------- FTMS ----------
 export const FTMS = {
   REQUEST_CONTROL: [0x00], RESET: [0x01], START: [0x07], STOP: [0x08, 0x01],
+  // the machine answers each control point command (0x80, opcode, result); commands go one at a
+  // time, the next when the answer comes or after this long without one (as qdomyos-zwift does)
+  ANSWER_WAIT: 0.3,
   simulation(grade) { const [lo, hi] = le16(Math.floor(grade * 100 + 0.5)); return [0x11, 0x00, 0x00, lo, hi, 40, 51]; },
   targetSpeed(kmh) { const [lo, hi] = le16(Math.floor(kmh * 100 + 0.5)); return [0x02, lo, hi]; },
   targetIncline(pct) { const [lo, hi] = le16(Math.floor(pct * 10 + 0.5)); return [0x03, lo, hi]; },
   bike(b) {
     const f = u16(b, 0); let i = 2; const d = {};
     if (!bit(f, 0)) { d.speed_kmh = u16(b, i) / 100; i += 2; }
-    if (bit(f, 1)) i += 2;
+    if (bit(f, 1)) { d.avg_speed_kmh = u16(b, i) / 100; i += 2; }
     if (bit(f, 2)) { d.cadence = u16(b, i) / 2; i += 2; }
-    if (bit(f, 3)) i += 2;
+    if (bit(f, 3)) { d.avg_cadence = u16(b, i) / 2; i += 2; }
     if (bit(f, 4)) { d.distance_m = u16(b, i) + (b[i + 2] ?? 0) * 65536; i += 3; }
     if (bit(f, 5)) { d.resistance = s16(b, i); i += 2; }
     if (bit(f, 6)) { d.power = s16(b, i); i += 2; }
@@ -75,7 +78,7 @@ export const FTMS = {
   treadmill(b) {
     const f = u16(b, 0); let i = 2; const d = {};
     if (!bit(f, 0)) { d.speed_kmh = u16(b, i) / 100; i += 2; }
-    if (bit(f, 1)) i += 2;
+    if (bit(f, 1)) { d.avg_speed_kmh = u16(b, i) / 100; i += 2; }
     if (bit(f, 2)) { d.distance_m = u16(b, i) + (b[i + 2] ?? 0) * 65536; i += 3; }
     if (bit(f, 3)) { d.incline = s16(b, i) / 10; i += 4; }
     if (bit(f, 4)) i += 4;
@@ -216,11 +219,24 @@ export class Session {
     this.grade = null; this.beltTarget = null; this.gaitNow = "stopped"; this.moving = false;
   }
   _write(d, bytes) { const k = KINDS[d.kind]; if (k.write && this.send) this.send(d.id, fullUuid(k.write), Uint8Array.from(bytes)); }
+  // FTMS control point: one command at a time; a newer hill / speed / incline replaces one still waiting
+  _pump(d) {
+    if (d.busy !== undefined || d.q.length === 0) return;
+    const c = d.q.shift();
+    d.busy = 0;
+    this._write(d, c);
+  }
+  _command(d, bytes) {
+    const i = d.q.findIndex((c) => c[0] === bytes[0] && [0x11, 0x02, 0x03].includes(bytes[0]));
+    if (i >= 0) { d.q[i] = bytes; return; }
+    d.q.push(bytes);
+    this._pump(d);
+  }
 
   add(id, name, uuids, kind) {
     kind = kind || detect(uuids, name);
     if (!kind) return null;
-    this.devices.set(id, { id, name: name || kind, kind, m: {}, seen: undefined, rx: [], csc: {}, steps: [], poll: 0, tries: 0, startT: 0, gradeT: 99 });
+    this.devices.set(id, { id, name: name || kind, kind, m: {}, seen: undefined, rx: [], csc: {}, steps: [], poll: 0, gradeT: 99, q: [] });
     return kind;
   }
   notifyChars(id) { const d = this.devices.get(id); return d ? KINDS[d.kind].notify.map(fullUuid) : []; }
@@ -231,8 +247,10 @@ export class Session {
     const d = this.devices.get(id);
     if (!d) return;
     d.connected = true; d.seen = this.t;
-    if (d.kind === "ftms_bike") { this._write(d, FTMS.REQUEST_CONTROL); this._write(d, FTMS.RESET); this._write(d, FTMS.START); d.tries = 1; }
-    else if (d.kind === "ftms_treadmill") this._write(d, FTMS.REQUEST_CONTROL);
+    d.q = []; d.busy = undefined;
+    // take control, then start. No reset: on most machines it clears the console's workout
+    if (d.kind === "ftms_bike") { this._command(d, FTMS.REQUEST_CONTROL); this._command(d, FTMS.START); }
+    else if (d.kind === "ftms_treadmill") this._command(d, FTMS.REQUEST_CONTROL);
     d.sentGrade = undefined; d.beltCmd = undefined;
   }
   remove(id) {
@@ -253,10 +271,15 @@ export class Session {
         d.seen = now;
         const x = d.kind === "ftms_bike" ? FTMS.bike(b) : FTMS.treadmill(b);
         Object.assign(m, x);
+        // machines that only send averages: use those
+        if (x.speed_kmh === undefined && x.avg_speed_kmh !== undefined && !m.has_speed) m.speed_kmh = x.avg_speed_kmh;
+        if (x.cadence === undefined && x.avg_cadence !== undefined && !m.has_cadence) m.cadence = x.avg_cadence;
+        if (x.speed_kmh !== undefined) m.has_speed = true;
+        if (x.cadence !== undefined) m.has_cadence = true;
         m.moving = d.kind === "ftms_bike" ? (m.cadence || 0) > 5 || (m.power || 0) > 0 : (m.speed_kmh || 0) > 0.3;
-        if (m.moving) d.tries = 99;
         if (d.beltCmd !== undefined && x.speed_kmh !== undefined && Math.abs(x.speed_kmh - d.beltCmd) < 0.15) d.reached = true;
-      } else if (c === "2ada" && b[0] === 0xff) this._write(d, FTMS.REQUEST_CONTROL);
+      } else if (c === "2ad9" && b[0] === 0x80) { d.busy = undefined; this._pump(d); }
+      else if (c === "2ada" && b[0] === 0xff) this._command(d, FTMS.REQUEST_CONTROL);
     } else if (d.kind === "sperax") {
       for (const f of spxFeed(d.rx, b)) {
         const s = f.ok && spxStatus(f.b);
@@ -302,19 +325,19 @@ export class Session {
       if (!d.connected) continue;
       d.gradeT += dt;
       if (d.kind === "sperax") { d.poll += dt; if (d.poll >= 0.25) { d.poll = 0; this._write(d, SPERAX.STATUS); } }
-      else if (d.kind === "ftms_bike" && d.tries < 4) {
-        d.startT += dt;
-        if (d.startT > 5) { d.startT = 0; d.tries++; if (d.tries < 4) this._write(d, FTMS.START); }
+      else if (d.busy !== undefined) {
+        d.busy += dt;
+        if (d.busy >= FTMS.ANSWER_WAIT) { d.busy = undefined; this._pump(d); }
       } else if (d.kind === "csc") d.m = cscValues(d.csc, now, this.wheel_mm / 1000);
     }
     const bike = this._first((d) => d.kind === "ftms_bike");
     const tread = this._first((d) => d.kind === "ftms_treadmill" && d.m.incline !== undefined);
     const g = this.allow_hills && this.grade != null ? this.grade : 0;
     if (bike && (bike.sentGrade === undefined || Math.abs(g - bike.sentGrade) >= 0.1) && bike.gradeT >= 0.25) {
-      this._write(bike, FTMS.simulation(g)); bike.sentGrade = g; bike.gradeT = 0;
+      this._command(bike, FTMS.simulation(g)); bike.sentGrade = g; bike.gradeT = 0;
     }
     if (tread && (tread.sentGrade === undefined || Math.abs(g - tread.sentGrade) >= 0.5) && tread.gradeT >= 2) {
-      this._write(tread, FTMS.targetIncline(clamp(g, -6, 15))); tread.sentGrade = g; tread.gradeT = 0;
+      this._command(tread, FTMS.targetIncline(clamp(g, -6, 15))); tread.sentGrade = g; tread.gradeT = 0;
     }
     const pad = this._first((d) => d.kind === "sperax" || d.kind === "ftms_treadmill");
     if (pad && this.allow_belt && this.beltTarget != null) {
@@ -335,7 +358,7 @@ export class Session {
         if (pad.beltCmd === undefined || Math.abs(nxt - pad.beltCmd) >= 0.1 || resend) {
           pad.resends = resend ? (pad.resends || 0) + 1 : 0;
           if (pad.beltCmd !== nxt) pad.reached = false;
-          this._write(pad, pad.kind === "sperax" ? SPERAX.speed(nxt) : FTMS.targetSpeed(nxt));
+          if (pad.kind === "sperax") this._write(pad, SPERAX.speed(nxt)); else this._command(pad, FTMS.targetSpeed(nxt));
           pad.beltCmd = nxt; pad.cmdT = now;
           if (Math.abs((pad.m.speed_kmh || 0) - nxt) < 0.15) pad.reached = true;
         }

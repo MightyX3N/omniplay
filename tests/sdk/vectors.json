@@ -89,8 +89,16 @@
    },
    {
     "writes": [
-     "bike 2ad9 00",
-     "bike 2ad9 01",
+     "bike 2ad9 00"
+    ]
+   },
+   {
+    "rx": "bike",
+    "char": "2ad9",
+    "hex": "80 00 01"
+   },
+   {
+    "writes": [
      "bike 2ad9 07"
     ]
    },
@@ -113,9 +121,22 @@
     }
    },
    {
+    "writes": []
+   },
+   {
+    "rx": "bike",
+    "char": "2ad9",
+    "hex": "80 07 01"
+   },
+   {
     "writes": [
      "bike 2ad9 11 00 00 00 00 28 33"
     ]
+   },
+   {
+    "rx": "bike",
+    "char": "2ad9",
+    "hex": "80 11 01"
    },
    {
     "rx": "bike",
@@ -211,6 +232,93 @@
      "speed_kmh": null,
      "moving": false,
      "kind": null
+    }
+   }
+  ]
+ },
+ {
+  "name": "bike queue",
+  "opts": {},
+  "steps": [
+   {
+    "add": "bike",
+    "name": "Slow bike",
+    "uuids": [
+     "1826",
+     "2ad2"
+    ]
+   },
+   {
+    "connected": "bike"
+   },
+   {
+    "writes": [
+     "bike 2ad9 00"
+    ]
+   },
+   {
+    "grade": 3
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "writes": []
+   },
+   {
+    "rx": "bike",
+    "char": "2ad9",
+    "hex": "80 00 01"
+   },
+   {
+    "writes": [
+     "bike 2ad9 07"
+    ]
+   },
+   {
+    "update": 0.2
+   },
+   {
+    "writes": []
+   },
+   {
+    "update": 0.15
+   },
+   {
+    "writes": [
+     "bike 2ad9 11 00 00 2C 01 28 33"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "bike averages",
+  "opts": {},
+  "steps": [
+   {
+    "add": "bike",
+    "name": "Avg bike",
+    "uuids": [
+     "1826",
+     "2ad2"
+    ]
+   },
+   {
+    "connected": "bike"
+   },
+   {
+    "rx": "bike",
+    "char": "2ad2",
+    "hex": "0B 00 D0 07 A0 00"
+   },
+   {
+    "update": 0.1
+   },
+   {
+    "expect": {
+     "speed_kmh": 20.0,
+     "cadence": 80,
+     "moving": true
     }
    }
   ]

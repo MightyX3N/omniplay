@@ -25,7 +25,8 @@ Supported: FTMS bikes and treadmills (e.g. Christopeit EM 8000), Sperax walking 
 - `gmod/omniplay_bridge/`: the Garry's Mod addon for the mod API
 - `native/omniplay_ble.c`: the Windows Bluetooth (WinRT) helper DLL
 - `tests/`: SDK tests against recorded device data, and `tests/app/full.lua`, which plays the app with pretend devices:
-  `OMNIPLAY_FAKE=1 OMNIPLAY_SCRIPT=$PWD/tests/app/full.lua xvfb-run -a love app`
+  `OMNIPLAY_FAKE=1 OMNIPLAY_SCRIPT=$PWD/tests/app/full.lua xvfb-run -a love app`, and `tests/native/test_writes.c`,
+  which checks the Windows Bluetooth helper never makes the game wait on a write
 - `tools/pack_characters.py`: builds the character sheets from the Mucho Pixels pack
 
 GitHub Actions tests the SDK and the app on every push, then builds the Windows app and the SDK zip.

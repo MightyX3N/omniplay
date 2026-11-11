@@ -14,6 +14,9 @@
  * Notifications and scan results arrive on Windows thread-pool threads, so they
  * are queued here behind a lock and Lua pulls them with sb_read()/sb_scan_list().
  * Lua is never called back, which is what keeps this safe for LuaJIT.
+ *
+ * Writes are queued too: sb_write_h() returns at once and each connection's own writer
+ * thread sends them in order and waits for Windows, so the game never stalls on a write.
  */
 #define WIN32_LEAN_AND_MEAN
 #define COBJMACROS
@@ -98,6 +101,8 @@ static void *g_watcher;
 static EventRegistrationToken g_recv_tok;
 static void *g_buffactory;
 #define MAXNOTIFY 4
+#define WQCAP 32
+#define WMAX 64
 #define MAXCONN 8
 
 typedef struct { void **vtbl; const GUID *iid; } Delegate;
@@ -113,6 +118,9 @@ typedef struct {
     char err[256], status[128];
     ConnDelegate handler;
     int used;
+    /* writes waiting to go out, sent in order by the writer thread */
+    unsigned char wq[WQCAP][WMAX]; int wqlen[WQCAP], wqhead, wqtail;
+    HANDLE wthread, wevent; volatile LONG wstop, wfailed;
 } Conn;
 static Conn g_conns[MAXCONN];
 
@@ -346,6 +354,7 @@ static const char *gatt_status(INT32 st)
     switch (st) { case 0: return "ok"; case 1: return "unreachable"; case 2: return "protocol error"; case 3: return "access denied"; default: return "unknown"; }
 }
 
+static DWORD WINAPI writer_thread(LPVOID p);
 static DWORD WINAPI connect_thread(LPVOID p)
 {
     Conn *c = p;
@@ -421,6 +430,11 @@ static DWORD WINAPI connect_thread(LPVOID p)
     }
     c_status(c, "Connected");
     InterlockedExchange(&c->state, 2);
+    if (c->write) {
+        c->wevent = CreateEventW(NULL, FALSE, FALSE, NULL);
+        if (c->wevent) c->wthread = CreateThread(NULL, 0, writer_thread, c, 0, NULL);
+        if (!c->wthread) c_err(c, "Couldn't start the writer thread", HRESULT_FROM_WIN32(GetLastError()));
+    }
     return 0;
 fail:
     release_conn(c);
@@ -437,6 +451,11 @@ API void sb_close_h(int h)
     Conn *c = conn_at(h);
     if (!c) return;
     if (c->thread) { WaitForSingleObject(c->thread, 20000); CloseHandle(c->thread); c->thread = NULL; }
+    if (c->wthread) {
+        InterlockedExchange(&c->wstop, 1); SetEvent(c->wevent);
+        WaitForSingleObject(c->wthread, 5000); CloseHandle(c->wthread); c->wthread = NULL;
+    }
+    if (c->wevent) { CloseHandle(c->wevent); c->wevent = NULL; }
     release_conn(c);
     EnterCriticalSection(&g_lock);
     c->qhead = c->qtail = c->dropped = 0;
@@ -478,12 +497,15 @@ API const char *sb_error_h(int h) { Conn *c = conn_at(h); return c ? c->err : "n
 API const char *sb_status_h(int h) { Conn *c = conn_at(h); return c ? c->status : ""; }
 API int sb_dropped_h(int h) { Conn *c = conn_at(h); return c ? c->dropped : 0; }
 
-API int sb_write_h(int h, const unsigned char *data, int len)
+/* one write, on the writer thread: waits for Windows (up to 2 s) */
+#ifdef OMNIPLAY_FAKE_WRITE
+static int OMNIPLAY_FAKE_WRITE(Conn *c, const unsigned char *data, int len);  /* tests/native */
+#endif
+static int do_write(Conn *c, const unsigned char *data, int len)
 {
-    ensure_ro();
-    Conn *c = conn_at(h);
-    if (!c || c->state != 2 || !c->write) { if (c) snprintf(c->err, sizeof c->err, "not connected"); return -1; }
-    if (len <= 0 || len > PKTMAX) return -2;
+#ifdef OMNIPLAY_FAKE_WRITE
+    return OMNIPLAY_FAKE_WRITE(c, data, len);
+#endif
     HRESULT hr = S_OK;
     EnterCriticalSection(&g_lock);
     if (!g_buffactory) hr = factory(L"Windows.Storage.Streams.Buffer", &IID_IBufferFactory_, &g_buffactory);
@@ -504,6 +526,48 @@ API int sb_write_h(int h, const unsigned char *data, int len)
     }
     return 0;
 }
+
+static DWORD WINAPI writer_thread(LPVOID p)
+{
+    Conn *c = p;
+    ensure_ro();
+    unsigned char buf[WMAX]; int len;
+    while (!c->wstop) {
+        WaitForSingleObject(c->wevent, 250);
+        for (;;) {
+            len = 0;
+            EnterCriticalSection(&g_lock);
+            if (c->wqhead != c->wqtail) {
+                len = c->wqlen[c->wqhead];
+                memcpy(buf, c->wq[c->wqhead], len);
+                c->wqhead = (c->wqhead + 1) % WQCAP;
+            }
+            LeaveCriticalSection(&g_lock);
+            if (!len || c->wstop) break;
+            if (c->state == 2 && c->write && do_write(c, buf, len) != 0) InterlockedIncrement(&c->wfailed);
+        }
+    }
+    return 0;
+}
+
+/* Queue a write to the connection's write characteristic; returns at once. 0 = queued,
+ * -1 not connected, -2 bad length, -5 queue full (the device isn't keeping up). Writes go out
+ * in order; failures show in sb_error_h() and sb_write_failures_h(). */
+API int sb_write_h(int h, const unsigned char *data, int len)
+{
+    Conn *c = conn_at(h);
+    if (!c || c->state != 2 || !c->write) { if (c) snprintf(c->err, sizeof c->err, "not connected"); return -1; }
+    if (len <= 0 || len > WMAX) return -2;
+    int r = 0;
+    EnterCriticalSection(&g_lock);
+    int next = (c->wqtail + 1) % WQCAP;
+    if (next == c->wqhead) r = -5;
+    else { memcpy(c->wq[c->wqtail], data, len); c->wqlen[c->wqtail] = len; c->wqtail = next; }
+    LeaveCriticalSection(&g_lock);
+    if (r == 0) SetEvent(c->wevent);
+    return r;
+}
+API int sb_write_failures_h(int h) { Conn *c = conn_at(h); return c ? (int)c->wfailed : 0; }
 
 /* Pop one queued notification of connection h; returns its length (0 if none) and which
  * notify characteristic (index into the sb_open_h list) it came from. */

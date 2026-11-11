@@ -39,27 +39,46 @@ S.append({"name": "detect", "steps": [
   {"detect": ["1814", "2a53"], "name": "RunPod", "kind": "rsc"},
   {"detect": ["180f", "1800"], "name": "TV", "kind": None},
 ]})
-# 2. bike: start commands, data, hills
+# 2. bike: start commands (one at a time, each after the machine's answer), data, hills
 S.append({"name": "bike", "opts": {}, "steps": [
   {"add": "bike", "name": "HT2405118", "uuids": ["1826", "2ad2", "2ad9", "2ada"], "kind": "ftms_bike"},
   {"notify": "bike", "chars": [FULL("2ad2"), FULL("2ad9"), FULL("2ada")]},
   {"connected": "bike"},
-  {"writes": ["bike 2ad9 00", "bike 2ad9 01", "bike 2ad9 07"]},
+  {"writes": ["bike 2ad9 00"]},  # take control; no reset (it clears the console's workout)
+  {"rx": "bike", "char": "2ad9", "hex": "80 00 01"}, {"writes": ["bike 2ad9 07"]},  # answered: start
   {"rx": "bike", "char": "2ad2", "hex": IDLE}, {"update": 0.1},
   {"expect": {"speed_kmh": 0, "cadence": 0, "power": 0, "moving": False, "gait": "stopped", "kind": "ftms_bike"}},
-  {"writes": ["bike 2ad9 11 00 00 00 00 28 33"]},  # flat to start with
+  {"writes": []},  # the flat hill waits for the answer to start
+  {"rx": "bike", "char": "2ad9", "hex": "80 07 01"}, {"writes": ["bike 2ad9 11 00 00 00 00 28 33"]},
+  {"rx": "bike", "char": "2ad9", "hex": "80 11 01"},
   {"rx": "bike", "char": "2ad2", "hex": PEDAL}, {"update": 0.1},
   {"expect": {"speed_kmh": 25.6, "cadence": 85, "power": 140, "hr": 130, "moving": True, "gait": "sprint"}},
   {"events": [["start"], ["gait", "sprint"]]},
   {"grade": 5}, {"update": 0.3},
   {"writes": ["bike 2ad9 11 00 00 F4 01 28 33"]},
-  {"grade": -2}, {"update": 0.1}, {"writes": []}, {"update": 0.2},  # at most 4 a second
+  {"grade": -2}, {"update": 0.1}, {"writes": []}, {"update": 0.2},  # no answer: the next goes after 0.3 s
   {"writes": ["bike 2ad9 11 00 00 38 FF 28 33"]},
   {"grade": -2.05}, {"update": 0.3}, {"writes": []},  # under 0.1 %: not sent again
   {"expect": {"grade": -2}},
   {"rx": "bike", "char": "2ada", "hex": "FF"}, {"writes": ["bike 2ad9 00"]},  # control lost: ask again
   {"remove": "bike"}, {"writes": ["bike 2ad9 08 01"]},
   {"expect": {"speed_kmh": None, "moving": False, "kind": None}},
+]})
+# 2b. a slow bike: nothing is sent while it's busy, commands keep their order, and it carries on
+#     if an answer never comes
+S.append({"name": "bike queue", "opts": {}, "steps": [
+  {"add": "bike", "name": "Slow bike", "uuids": ["1826", "2ad2"]}, {"connected": "bike"},
+  {"writes": ["bike 2ad9 00"]},
+  {"grade": 3}, {"update": 0.1}, {"writes": []},  # start and the hill both wait
+  {"rx": "bike", "char": "2ad9", "hex": "80 00 01"}, {"writes": ["bike 2ad9 07"]},
+  {"update": 0.2}, {"writes": []}, {"update": 0.15},  # no answer to start in 0.3 s: carry on
+  {"writes": ["bike 2ad9 11 00 00 2C 01 28 33"]},
+]})
+# 2c. a bike that only sends averages
+S.append({"name": "bike averages", "opts": {}, "steps": [
+  {"add": "bike", "name": "Avg bike", "uuids": ["1826", "2ad2"]}, {"connected": "bike"},
+  {"rx": "bike", "char": "2ad2", "hex": "0B 00 D0 07 A0 00"}, {"update": 0.1},
+  {"expect": {"speed_kmh": 20.0, "cadence": 80, "moving": True}},
 ]})
 # 3. Sperax pad: polling, real frames, belt speed only when allowed and running
 steps = [

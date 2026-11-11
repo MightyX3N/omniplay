@@ -92,6 +92,9 @@ end
 -- ---------- FTMS (bikes, treadmills) ----------
 local FTMS = {}
 FTMS.REQUEST_CONTROL, FTMS.RESET, FTMS.START, FTMS.STOP = { 0x00 }, { 0x01 }, { 0x07 }, { 0x08, 0x01 }
+-- The machine answers each control point command (0x80, opcode, result). Commands go one at a time:
+-- the next is sent when the answer comes, or after this long without one (as qdomyos-zwift does).
+FTMS.ANSWER_WAIT = 0.3
 function FTMS.simulation(grade) -- grade %, wind 0, Crr 0.004, Cw 0.51
   local lo, hi = le16(floor(grade * 100 + 0.5))
   return { 0x11, 0x00, 0x00, lo, hi, 40, 51 }
@@ -101,9 +104,9 @@ function FTMS.target_incline(pct) local lo, hi = le16(floor(pct * 10 + 0.5)); re
 function FTMS.bike(b)
   local f, i, d = u16(b, 1), 3, {}
   if not bit(f, 0) then d.speed_kmh = u16(b, i) / 100; i = i + 2 end
-  if bit(f, 1) then i = i + 2 end
+  if bit(f, 1) then d.avg_speed_kmh = u16(b, i) / 100; i = i + 2 end
   if bit(f, 2) then d.cadence = u16(b, i) / 2; i = i + 2 end
-  if bit(f, 3) then i = i + 2 end
+  if bit(f, 3) then d.avg_cadence = u16(b, i) / 2; i = i + 2 end
   if bit(f, 4) then d.distance_m = u16(b, i) + (b[i + 2] or 0) * 65536; i = i + 3 end
   if bit(f, 5) then d.resistance = s16(b, i); i = i + 2 end
   if bit(f, 6) then d.power = s16(b, i); i = i + 2 end
@@ -115,7 +118,7 @@ end
 function FTMS.treadmill(b)
   local f, i, d = u16(b, 1), 3, {}
   if not bit(f, 0) then d.speed_kmh = u16(b, i) / 100; i = i + 2 end
-  if bit(f, 1) then i = i + 2 end
+  if bit(f, 1) then d.avg_speed_kmh = u16(b, i) / 100; i = i + 2 end
   if bit(f, 2) then d.distance_m = u16(b, i) + (b[i + 2] or 0) * 65536; i = i + 3 end
   if bit(f, 3) then d.incline = s16(b, i) / 10; i = i + 4 end
   if bit(f, 4) then i = i + 4 end
@@ -301,6 +304,22 @@ local function write(self, d, bytes)
   self.send(d.id, full(k.write), out(self, bytes))
 end
 
+-- FTMS control point: one command at a time (see FTMS.ANSWER_WAIT). A newer hill or speed
+-- replaces one still waiting, so a busy machine always gets the latest, never a backlog.
+local function pump(self, d)
+  if d.busy or #d.q == 0 then return end
+  local c = table.remove(d.q, 1)
+  d.busy = 0
+  write(self, d, c)
+end
+local function command(self, d, bytes)
+  for i, c in ipairs(d.q) do
+    if c[1] == bytes[1] and (bytes[1] == 0x11 or bytes[1] == 0x02 or bytes[1] == 0x03) then d.q[i] = bytes; return end
+  end
+  d.q[#d.q + 1] = bytes
+  pump(self, d)
+end
+
 -- A device was connected and its services found. uuids: its service and/or characteristic UUIDs.
 -- kind can be given to skip detection. Returns the kind, or nil if OmniPlay doesn't know it.
 function Session:add(id, name, uuids, kind)
@@ -308,7 +327,7 @@ function Session:add(id, name, uuids, kind)
   if not kind then return nil end
   if not self.devices[id] then self.order[#self.order + 1] = id end
   self.devices[id] = { id = id, name = name or kind, kind = kind, m = {}, seen = nil, rx = {}, csc = {}, steps = {},
-    poll = 0, tries = 0, start_t = 0, grade_t = 99 }
+    poll = 0, grade_t = 99, q = {} }
   return kind
 end
 -- characteristics to subscribe to (full UUIDs), and the service they are in
@@ -326,10 +345,13 @@ function Session:connected(id)
   local d = self.devices[id]
   if not d then return end
   d.connected, d.seen = true, self.t
+  d.q, d.busy = {}, nil
   if d.kind == "ftms_bike" then
-    write(self, d, FTMS.REQUEST_CONTROL); write(self, d, FTMS.RESET); write(self, d, FTMS.START); d.tries = 1
+    -- take control, then start. No reset: on most machines it clears the console's workout
+    -- (qdomyos-zwift only resets the few models that need it)
+    command(self, d, FTMS.REQUEST_CONTROL); command(self, d, FTMS.START)
   elseif d.kind == "ftms_treadmill" then
-    write(self, d, FTMS.REQUEST_CONTROL)
+    command(self, d, FTMS.REQUEST_CONTROL)
   end
   d.sent_grade, d.belt_cmd = nil, nil
 end
@@ -354,11 +376,17 @@ function Session:receive(id, char, bytes)
       d.seen = now
       local x = d.kind == "ftms_bike" and FTMS.bike(b) or FTMS.treadmill(b)
       for k, v in pairs(x) do m[k] = v end
+      -- machines that only send averages: use those
+      if x.speed_kmh == nil and x.avg_speed_kmh ~= nil and not m.has_speed then m.speed_kmh = x.avg_speed_kmh end
+      if x.cadence == nil and x.avg_cadence ~= nil and not m.has_cadence then m.cadence = x.avg_cadence end
+      if x.speed_kmh ~= nil then m.has_speed = true end
+      if x.cadence ~= nil then m.has_cadence = true end
       if d.kind == "ftms_bike" then m.moving = (m.cadence or 0) > 5 or (m.power or 0) > 0 else m.moving = (m.speed_kmh or 0) > 0.3 end
-      if m.moving then d.tries = 99 end
       if d.belt_cmd and x.speed_kmh and math.abs(x.speed_kmh - d.belt_cmd) < 0.15 then d.reached = true end
+    elseif c == "2ad9" and b[1] == 0x80 then
+      d.busy = nil; pump(self, d) -- the answer to our last command: send the next
     elseif c == "2ada" and b[1] == 0xFF then
-      write(self, d, FTMS.REQUEST_CONTROL) -- control permission lost
+      command(self, d, FTMS.REQUEST_CONTROL) -- control permission lost
     end
   elseif d.kind == "sperax" then
     for _, f in ipairs(SPX.feed(d.rx, b)) do
@@ -421,9 +449,9 @@ function Session:update(dt)
       if d.kind == "sperax" then
         d.poll = d.poll + dt
         if d.poll >= 0.25 then d.poll = 0; write(self, d, SPX.STATUS) end -- the pad only answers when asked
-      elseif d.kind == "ftms_bike" and d.tries < 4 then
-        d.start_t = d.start_t + dt
-        if d.start_t > 5 then d.start_t = 0; d.tries = d.tries + 1; if d.tries < 4 then write(self, d, FTMS.START) end end
+      elseif d.busy then
+        d.busy = d.busy + dt
+        if d.busy >= FTMS.ANSWER_WAIT then d.busy = nil; pump(self, d) end
       elseif d.kind == "csc" then
         local x = csc_values(d.csc, now, self.wheel_mm / 1000)
         d.m = x
@@ -435,10 +463,10 @@ function Session:update(dt)
   local tread = first(self, function(d) return d.kind == "ftms_treadmill" and d.m.incline ~= nil end)
   local g = self.allow_hills and self.grade or 0
   if bike and (bike.sent_grade == nil or math.abs(g - bike.sent_grade) >= 0.1) and bike.grade_t >= 0.25 then
-    write(self, bike, FTMS.simulation(g)); bike.sent_grade, bike.grade_t = g, 0
+    command(self, bike, FTMS.simulation(g)); bike.sent_grade, bike.grade_t = g, 0
   end
   if tread and (tread.sent_grade == nil or math.abs(g - tread.sent_grade) >= 0.5) and tread.grade_t >= 2 then
-    write(self, tread, FTMS.target_incline(clamp(g, -6, 15))); tread.sent_grade, tread.grade_t = g, 0
+    command(self, tread, FTMS.target_incline(clamp(g, -6, 15))); tread.sent_grade, tread.grade_t = g, 0
   end
   -- belt speed, ramped, one command a second, waits for the belt and resends if it was ignored
   local pad = first(self, function(d) return d.kind == "sperax" or d.kind == "ftms_treadmill" end)
@@ -462,7 +490,7 @@ function Session:update(dt)
       if not pad.belt_cmd or math.abs(nxt - pad.belt_cmd) >= 0.1 or resend then
         pad.resends = resend and (pad.resends or 0) + 1 or 0
         if pad.belt_cmd ~= nxt then pad.reached = false end
-        write(self, pad, pad.kind == "sperax" and SPX.speed(nxt) or FTMS.target_speed(nxt))
+        if pad.kind == "sperax" then write(self, pad, SPX.speed(nxt)) else command(self, pad, FTMS.target_speed(nxt)) end
         pad.belt_cmd, pad.cmd_t = nxt, now
         if math.abs((pad.m.speed_kmh or 0) - nxt) < 0.15 then pad.reached = true end
       end
