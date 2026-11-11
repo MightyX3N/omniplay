@@ -1,5 +1,5 @@
 -- The SDK's Lua core against tests/sdk/vectors.json (the JS core runs the same file: tests/sdk/test_sdk.mjs)
-package.path = "sdk/lua/?.lua;app/?.lua;" .. package.path
+package.path = "sdk/lua/?.lua;tests/?.lua;" .. package.path
 local OmniPlay = require("omniplay")
 local json = require("json")
 local f = assert(io.open("tests/sdk/vectors.json")); local scenarios = json.decode(f:read("*a")); f:close()

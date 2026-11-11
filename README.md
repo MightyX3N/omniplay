@@ -1,29 +1,25 @@
 # OmniPlay
 
-Free, open-source Windows app that turns your fitness gear into a game controller. Walk on a treadmill, run with a footpod or pedal an exercise bike, and your character moves in the game.
+Your bike is the controller. OmniPlay connects bikes, treadmills, walking pads, footpods and heart-rate straps to games: its own side-scroller you play with your legs, and, on Windows, a bridge that turns your movement into input for other games.
 
-**Status: early development.** What works today is a probe that connects to a Sperax walking pad and reads live state, speed and steps.
+**Status: being rebuilt.** The old app has been removed; the new one is being written in LÖVE (Lua) for Windows, Android and the browser. The SDK below is ready to use.
 
-## Planned
-- **Devices:** standard Bluetooth fitness gear (FTMS treadmills, bikes, cross trainers and rowers; footpods such as the Zwift RunPod; speed/cadence sensors; power meters; heart-rate straps), plus brand protocols, one driver file each. Sperax walking pads already work.
-- **Any game:** keyboard and Xbox controller emulation, with per-game profiles and walk/run/sprint thresholds.
-- **Mod API:** a localhost WebSocket. Games get live speed, cadence and power, and can send hills and terrain back, which OmniPlay turns into bike resistance or treadmill incline.
-- **Garry's Mod gamemode:** a Zwift-style world for GMod, built on the API.
+## The SDK
 
-## Device support
-| Device | Status |
-|---|---|
-| Sperax walking pads (`SPERAX_RM01`, e.g. P1) | Working in the probe |
-| Zwift RunPod and other footpods | Planned |
-| FTMS treadmills, bikes, rowers (e.g. Christopeit EM 8000) | Planned |
+The OmniPlay SDK talks to the devices straight from your game, **without the OmniPlay app**. Players install nothing but your game. Pure Lua (5.1 to 5.4, LuaJIT) and JavaScript cores, plus the Bluetooth side for Android. See [docs/SDK.md](docs/SDK.md).
 
-No pairing needed: OmniPlay connects directly using the Windows Bluetooth API, the same way Zwift does. Requires Windows 10 (version 1703 or newer) or Windows 11.
+Supported: FTMS bikes and treadmills (e.g. Christopeit EM 8000), Sperax walking pads, CSC speed / cadence sensors (e.g. Rockbros C3), RSC footpods (e.g. Zwift RunPod), heart-rate straps (e.g. Polar H10).
 
 ## Repo layout
-- `app/`: the LÖVE (Lua) app; `app/drivers/` has one file per device protocol
-- `native/omniplay_ble.c`: small Bluetooth helper DLL, called from Lua via FFI
-- `tests/`: decoder tests built from real captured frames, plus a headless smoke test
-- `build.sh`: builds `dist/OmniPlay.zip` (GitHub Actions runs it on every push; download it from the Actions tab)
+
+- `sdk/`: the SDK (`lua/`, `js/`, `android/`) and its licence
+- `docs/`: [SDK guide](docs/SDK.md) and the [mod API](docs/API.md) for games that talk to the OmniPlay app
+- `gmod/omniplay_bridge/`: the Garry's Mod addon for the mod API
+- `native/omniplay_ble.c`: the Windows Bluetooth (WinRT) helper, reused by the new app
+- `tests/`: SDK tests, run against recorded device data (`luajit tests/test_sdk.lua`, `node tests/sdk/test_sdk.mjs`)
+
+GitHub Actions tests the SDK on every push and packages it as the `OmniPlay-SDK` artifact.
 
 ## Licence
-GPL-3.0. The Sperax protocol notes come from [sperax-walkpad](https://github.com/Guhan-SenSam/sperax-walkpad) (MIT).
+
+App: GPL-3.0. SDK: its own licence in [sdk/LICENSE](sdk/LICENSE) (free for any game; OmniPlay support can't be sold separately). The Sperax protocol notes come from [sperax-walkpad](https://github.com/Guhan-SenSam/sperax-walkpad) (MIT).
