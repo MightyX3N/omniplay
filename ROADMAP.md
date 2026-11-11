@@ -16,14 +16,15 @@ OmniPlay has three parts:
 
 | | What it is |
 |---|---|
-| **Every device** | The OmniPlay SDK, ported to Pascal, replaces the game's own trainer code, so walking pads and treadmills work as well as bikes and sensors. Walk or run the same world you ride. |
+| **Every device** | The game embeds Lua and runs the OmniPlay SDK (`omniplay.lua`, the same file the app uses) in place of its own trainer code, so walking pads and treadmills work as well as bikes and sensors. Only the Bluetooth transport stays native (Windows and Android). Walk or run the same world you ride. |
 | **Ghosts and segment races** | Every road you ride becomes a race against your own best and other players' best. Leaderboards per segment. |
 | **Live riders nearby** | Anyone can host with one click through [playit.gg](https://playit.gg). Hosts are listed on a small OmniPlay server (a Cloudflare Worker), so you see players riding near you and can join, draft or race them. |
 | **Exploring** | Places to discover, climbs to conquer, collectibles along the road, and a map that fills in as you ride. |
 | **Progression** | Unlock kits, bikes, colours and Dream Worlds by riding. |
 | **Tour mode** | A roguelike run: pick your next stage on a branching map, with elite climbs, rewards, and a run that ends if you blow up. |
 | **Weekly events** | One route a week that everyone rides, with ghosts, so it works even when few people are online. |
-| **Asset packs** | Like Minecraft resource packs: a folder or zip that replaces any texture, model, sound or sky. Players turn packs on and order them; anything a pack doesn't change falls back to the next. Packs change how the world looks, not its shape (the world is generated from map data). |
+| **Mods and packs** | Mods in Lua, with a mod API: ride and segment events, the rider's numbers, props and markers in the world, HUD panels and menus, whole game modes. A pack is a folder or zip with `pack.json` that can carry textures, models, sounds, skies (like Minecraft resource packs) and Lua scripts. Players turn packs on and order them; anything a pack doesn't change falls back to the next. Mods run sandboxed (no files outside their own folder, no programs). In live rides, the host lists the mods that change the game and players are offered them; looks-only packs can differ per player. Packs change how the world looks, not its shape (the world is generated from map data). |
+| **Android** | The game runs on Android as well as Windows (REZVIVO already builds for both). Devices connect over Android Bluetooth, and phones can host live rides too, with the playit.gg agent (open source) built for Android. |
 
 ## Servers
 
@@ -33,18 +34,22 @@ supports. OmniPlay's own server is a Cloudflare Worker:
 - **Ghosts and leaderboards** stored in Cloudflare R2 / D1 (free tier).
 - **Host list** for live riding: a host registers its playit.gg address and where it is in the
   world; players ask for hosts near them. The game traffic itself goes player to host over
-  playit.gg, not through the Worker.
+  playit.gg, not through the Worker. The playit.gg agent is built into the game, on Windows and
+  Android, so hosting is one click.
 
 ## Order of work
 
-1. Fork, build for Windows, rebrand, cut loose from rezvivo.com.
-2. OmniPlay SDK in Pascal, replacing the game's trainer code.
-3. Ghosts and segment races, with the Worker.
-4. Live riders through playit.gg.
-5. Exploring goals and progression.
-6. Tour mode.
-7. Weekly events.
-8. Asset packs.
+1. Fork, build for Windows and Android, rebrand, cut loose from rezvivo.com.
+2. Lua in the game, running the OmniPlay SDK in place of the game's trainer code.
+3. Mod API and pack format (scripts and assets), sandboxed.
+4. Ghosts and segment races, with the Worker.
+5. Live riders through playit.gg, hosting from Windows and Android.
+6. Exploring goals and progression.
+7. Tour mode, written as a built-in mod.
+8. Weekly events, written as a built-in mod.
+
+Tour mode and weekly events are built on the mod API, which proves the API can carry a whole game
+mode.
 
 Each step is built, tested and shown before the next one starts.
 
