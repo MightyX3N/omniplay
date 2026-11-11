@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The OmniPlay game</title>
+<meta name="description" content="Ride, walk or run a 3D world on your own equipment: real places and dream worlds, ghosts, live riders, tours and events.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="logo" href="./"><b>●</b> OmniPlay</a>
+  <div class="links">
+    <a href="./">Home</a>
+    <a class="on" href="game.html">The game</a>
+    <a class="hide-sm" href="#plan">Plan</a>
+    <a href="https://github.com/MightyX3N/omniplay/blob/main/docs/SDK.md">Docs</a>
+    <a class="hide-sm" href="https://github.com/MightyX3N/omniplay">GitHub</a>
+  </div>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <div class="pill">Planned · Built on REZVIVO</div>
+  <h1>Ride the <em>world.</em></h1>
+  <p class="lead">A 3D world you ride, walk or run through on your own bike, treadmill or walking pad. Real places built from OpenStreetMap, hand-made dream worlds, and other players on the road with you. Climbs feel like climbs: the hills go to your machine.</p>
+  <div class="btns">
+    <span class="btn primary disabled"><i class="ti ti-download"></i>Download for Windows (coming)</span>
+    <a class="btn" href="https://github.com/MightyX3N/omniplay/blob/main/ROADMAP.md"><i class="ti ti-map-2"></i>Read the roadmap</a>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="kicker">The world</div>
+  <h2>Anywhere, or somewhere new</h2>
+  <p class="sub">The game starts from <a class="more" href="https://rezvivo.com">REZVIVO</a>, an open-source indoor-cycling app (GPL-3.0). It already builds terrain, roads, buildings, water and forests from map data as you move, has hand-made Dream Worlds, a rider you can shape and dress in cycling kit, bots to ride with, and workouts.</p>
+  <div class="grid three">
+    <div class="card"><i class="ti ti-map-pin"></i><h3>Real places</h3><p>Choose a spot on the map and ride, or load a GPX route. The world loads around you.</p></div>
+    <div class="card"><i class="ti ti-sparkles"></i><h3>Dream worlds</h3><p>Hand-made islands, mountains, canyons and cities that aren't on any map.</p></div>
+    <div class="card"><i class="ti ti-mountain"></i><h3>Real climbs</h3><p>The road's gradient becomes resistance on your bike or incline on your treadmill.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="kicker">What OmniPlay adds</div>
+  <h2>More than a ride</h2>
+  <p class="sub">REZVIVO is a training app with a world. OmniPlay turns it into a game.</p>
+  <div class="grid three">
+    <div class="card"><i class="ti ti-walk"></i><h3>Every device</h3><p>Bikes, trainers, sensors, and walking pads and treadmills too, through the OmniPlay SDK. Walk or run the same roads you ride.</p></div>
+    <div class="card"><i class="ti ti-ghost-2"></i><h3>Ghosts and segments</h3><p>Every road is a race against your best and other players' best, with leaderboards per segment.</p></div>
+    <div class="card"><i class="ti ti-users"></i><h3>Live riders nearby</h3><p>Host with one click over playit.gg. See players riding near you and join, draft or race them.</p></div>
+    <div class="card"><i class="ti ti-compass"></i><h3>Exploring</h3><p>Places to discover, climbs to conquer, collectibles on the road, and a map that fills in as you go.</p></div>
+    <div class="card"><i class="ti ti-shirt-sport"></i><h3>Unlocks</h3><p>Earn kits, bikes, colours and dream worlds by riding.</p></div>
+    <div class="card"><i class="ti ti-route"></i><h3>Tour mode</h3><p>A roguelike run: pick your next stage on a branching map, with elite climbs and rewards. Blow up and the run ends.</p></div>
+    <div class="card"><i class="ti ti-calendar-event"></i><h3>Weekly events</h3><p>One route everyone rides each week, with ghosts, so there's always someone to race.</p></div>
+    <div class="card"><i class="ti ti-palette"></i><h3>Asset packs</h3><p>Swap any texture, model, sound or sky with packs, like resource packs. Stack them in the order you want.</p></div>
+    <div class="card"><i class="ti ti-lock-open"></i><h3>Open source</h3><p>GPL-3.0, like REZVIVO. Free to play, free to change.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap cols">
+  <div>
+    <div class="kicker">How online works</div>
+    <h2>Players host, a small server connects them</h2>
+    <p class="sub">There's no big game server to pay for. Players host rides themselves through playit.gg, and a small OmniPlay server (a Cloudflare Worker) only keeps the list of hosts, the ghosts and the leaderboards.</p>
+  </div>
+  <div class="status">
+    <div class="todo"><span class="dot"></span><span>Host: one click starts a ride and registers it with the server</span></div>
+    <div class="todo"><span class="dot"></span><span>Player: the game asks the server for hosts riding near you</span></div>
+    <div class="todo"><span class="dot"></span><span>Riding: you connect straight to the host over playit.gg</span></div>
+    <div class="todo"><span class="dot"></span><span>After the ride: your ghost and times go to the server</span></div>
+  </div>
+</div></section>
+
+<section id="plan"><div class="wrap">
+  <div class="kicker">Plan</div>
+  <h2>In this order</h2>
+  <p class="small" style="margin:0 0 16px">Each step is built, tested and shown before the next starts.</p>
+  <div class="status">
+    <div class="todo"><span class="dot"></span><span>1. Fork, build for Windows, rebrand, own servers instead of rezvivo.com</span><span class="tag">Next</span></div>
+    <div class="todo"><span class="dot"></span><span>2. OmniPlay SDK in the game: every device works</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>3. Ghosts and segment races</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>4. Live riders over playit.gg</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>5. Exploring goals and unlocks</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>6. Tour mode</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>7. Weekly events</span><span class="tag">Planned</span></div>
+    <div class="todo"><span class="dot"></span><span>8. Asset packs</span><span class="tag">Planned</span></div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <span>OmniPlay · GPL-3.0 · Built on REZVIVO · Not affiliated with Zwift or any equipment maker</span>
+  <a href="https://github.com/MightyX3N/omniplay">GitHub</a>
+</div></footer>
+</body>
+</html>

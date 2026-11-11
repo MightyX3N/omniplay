@@ -78,3 +78,12 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
   .steps > div:last-child { border-bottom: 0; }
   .hero { padding: 48px 0 36px; }
 }
+
+a.more { color: var(--accent); }
+a.more:hover { text-decoration: underline; }
+.sub a.more, .card a.more { white-space: nowrap; }
+.grid.three .card { display: flex; flex-direction: column; }
+.cols .status { max-width: none; }
+@media (max-width: 820px) {
+  .links { gap: 14px; }
+}

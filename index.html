@@ -3,83 +3,67 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OmniPlay: your treadmill is the controller</title>
-<meta name="description" content="Free, open-source app that turns treadmills, exercise bikes and footpods into a game controller for any PC game.">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<title>OmniPlay: your bike is the controller</title>
+<meta name="description" content="Free, open-source: connect bikes, treadmills and walking pads to games, and ride a 3D world with your own equipment.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
 <nav><div class="wrap">
   <a class="logo" href="./"><b>●</b> OmniPlay</a>
   <div class="links">
-    <a class="hide-sm" href="#devices">Devices</a>
+    <a class="on" href="./">Home</a>
+    <a href="game.html">The game</a>
     <a class="hide-sm" href="#status">Status</a>
-    <a class="hide-sm" href="#modders">Modders</a>
-    <a href="https://github.com/MightyX3N/omniplay">GitHub</a>
+    <a href="https://github.com/MightyX3N/omniplay/blob/main/docs/SDK.md">Docs</a>
+    <a class="hide-sm" href="https://github.com/MightyX3N/omniplay">GitHub</a>
   </div>
 </div></nav>
 
 <header class="hero"><div class="wrap">
   <div class="pill">Free · Open source · Early development</div>
-  <h1>Your treadmill is the <em>controller.</em></h1>
-  <p class="lead">Walk, run or pedal, and your character moves. OmniPlay connects treadmills, exercise bikes and footpods to any PC game, and lets game mods send hills back to your machine.</p>
+  <h1>Your bike is the <em>controller.</em></h1>
+  <p class="lead">Pedal, walk or run, and the game moves with you. OmniPlay connects exercise bikes, treadmills, walking pads, footpods and heart-rate straps to games, and sends the hills back to your machine.</p>
   <div class="btns">
-    <span class="btn primary disabled"><i class="ti ti-download"></i>Download for Windows (coming soon)</span>
+    <a class="btn primary" href="game.html"><i class="ti ti-bike"></i>See the game</a>
     <a class="btn" href="https://github.com/MightyX3N/omniplay"><i class="ti ti-brand-github"></i>View on GitHub</a>
   </div>
 </div></header>
 
 <section><div class="wrap">
-  <div class="steps">
-    <div><div class="n">01</div><h3>Connect</h3><p>No pairing. Turn your device on and pick it from the list.</p></div>
-    <div><div class="n">02</div><h3>Pick a game</h3><p>Keyboard or Xbox controller output, with a profile per game.</p></div>
-    <div><div class="n">03</div><h3>Move</h3><p>Walk to walk, run to run. Stop and your character stops.</p></div>
+  <div class="kicker">Three parts</div>
+  <h2>One way in, for any game</h2>
+  <div class="grid three">
+    <div class="card"><i class="ti ti-world"></i><h3>The game</h3><p>A 3D world you ride, walk or run through: real places from OpenStreetMap and hand-made worlds, with ghosts, live riders and races. <a class="more" href="game.html">More</a></p></div>
+    <div class="card"><i class="ti ti-device-desktop"></i><h3>The app</h3><p>Pair your devices in seconds and see them live. Later, a bridge turns your movement into keyboard or gamepad input for other games.</p></div>
+    <div class="card"><i class="ti ti-code"></i><h3>The SDK</h3><p>Add OmniPlay to your own game. Players install nothing but your game. Lua, JavaScript and Android. <a class="more" href="https://github.com/MightyX3N/omniplay/blob/main/docs/SDK.md">Docs</a></p></div>
   </div>
 </div></section>
 
 <section id="devices"><div class="wrap">
   <div class="kicker">Devices</div>
   <h2>Works with your gear</h2>
-  <p class="sub">OmniPlay speaks the open Bluetooth fitness standards, so most current equipment works. Brands with their own protocol get a driver of their own.</p>
+  <p class="sub">OmniPlay speaks the open Bluetooth fitness standards, so most current equipment works. No pairing in Windows settings: turn the device on and pick it from the list.</p>
   <div class="grid">
-    <div class="card"><i class="ti ti-walk"></i><h3>Treadmills</h3><p>FTMS treadmills and Sperax walking pads</p></div>
-    <div class="card"><i class="ti ti-bike"></i><h3>Exercise bikes</h3><p>FTMS bikes, power meters, cadence sensors</p></div>
-    <div class="card"><i class="ti ti-shoe"></i><h3>Footpods</h3><p>Zwift RunPod, Stryd, Garmin and other footpods</p></div>
+    <div class="card"><i class="ti ti-bike"></i><h3>Exercise bikes</h3><p>FTMS bikes and smart trainers, with hills as resistance</p></div>
+    <div class="card"><i class="ti ti-walk"></i><h3>Treadmills</h3><p>FTMS treadmills and Sperax walking pads, with speed control</p></div>
+    <div class="card"><i class="ti ti-gauge"></i><h3>Sensors</h3><p>Speed and cadence sensors, footpods</p></div>
     <div class="card"><i class="ti ti-heartbeat"></i><h3>Heart rate</h3><p>Any Bluetooth chest strap</p></div>
   </div>
-  <p class="small" style="margin-top:14px">Device missing? OmniPlay will include a device explorer that lists what your machine exposes, so support can be added.</p>
 </div></section>
 
 <section id="status"><div class="wrap">
   <div class="kicker">Status</div>
   <h2>Where it's at</h2>
-  <p class="small" style="margin:0 0 16px">Updated Nov 6, 2026</p>
+  <p class="small" style="margin:0 0 16px">Updated Nov 11, 2026 · full plan in the <a class="more" href="https://github.com/MightyX3N/omniplay/blob/main/ROADMAP.md">roadmap</a></p>
   <div class="status">
-    <div class="done"><span class="dot"></span><span>Bluetooth without pairing</span><span class="tag">Done</span></div>
-    <div class="done"><span class="dot"></span><span>Sperax walking pad: live data and speed control</span><span class="tag">Done</span></div>
-    <div class="done"><span class="dot"></span><span>FTMS bikes: live data, hills and resistance (tested on Christopeit EM 8000)</span><span class="tag">Done</span></div>
-    <div class="done"><span class="dot"></span><span>Device explorer and auto-reconnect</span><span class="tag">Done</span></div>
-    <div class="done"><span class="dot"></span><span>Keyboard output with per-game profiles (works in Garry's Mod)</span><span class="tag">Done</span></div>
-    <div class="done"><span class="dot"></span><span>Workout recording with FIT and TCX export</span><span class="tag">Done</span></div>
-    <div class="wip"><span class="dot"></span><span>Mod API: WebSocket and Garry's Mod bridge</span><span class="tag">Testing</span></div>
+    <div class="done"><span class="dot"></span><span>SDK: FTMS bikes and treadmills, Sperax walking pads, cadence sensors, footpods, heart rate</span><span class="tag">Done</span></div>
+    <div class="done"><span class="dot"></span><span>Tested on a Christopeit EM 8000 bike, Rockbros C3 sensor and Sperax walking pad</span><span class="tag">Done</span></div>
+    <div class="done"><span class="dot"></span><span>App: pairing with a live test, settings</span><span class="tag">Done</span></div>
+    <div class="todo"><span class="dot"></span><span>The game: fork of REZVIVO, rebranded, own servers</span><span class="tag">Next</span></div>
+    <div class="todo"><span class="dot"></span><span>The game: every device through the SDK, ghosts, live riders</span><span class="tag">Planned</span></div>
     <div class="todo"><span class="dot"></span><span>FTMS treadmills and footpods on real hardware</span><span class="tag">Needs testers</span></div>
-    <div class="todo"><span class="dot"></span><span>Gamepad output</span><span class="tag">Planned</span></div>
-  </div>
-</div></section>
-
-<section id="modders"><div class="wrap cols">
-  <div>
-    <div class="kicker">For modders</div>
-    <h2>Hills that push back</h2>
-    <p class="sub">Connect to a local WebSocket. Read the player's speed, cadence and power, and send terrain back. OmniPlay turns it into bike resistance or treadmill incline, on machines that support it.</p>
-    <p class="warn">Draft. The API isn't built yet and may change.</p>
-  </div>
-  <div>
-    <div class="small">From OmniPlay, 20× a second</div>
-    <div class="code">{"t": "state", "speed_kmh": 4.2, "cadence": 108,
- "power_w": null, "moving": true, "gait": "walk"}</div>
-    <div class="small">From your game</div>
-    <div class="code">{"t": "terrain", "grade": 4.5}</div>
+    <div class="todo"><span class="dot"></span><span>Bridge for other games</span><span class="tag">Planned</span></div>
   </div>
 </div></section>
 
